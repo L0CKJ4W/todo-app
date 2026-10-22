@@ -1,6 +1,7 @@
 import * as store from './store.js';
 import { h, icon, progressPie, formDialog, confirmDialog, actionSheet, openOverlay, toast, confetti, haptic } from './ui.js';
-import { onLongPress, enableEdgeSwipeBack, makeSortable } from './gestures.js';
+import { onLongPress, enableEdgeSwipeBack, makeSortable, makeSwipeable } from './gestures.js';
+import { today, dueLabel, dueState, quickDates } from './dates.js';
 
 const topbar = document.getElementById('topbar');
 const main = document.getElementById('app');
@@ -11,10 +12,14 @@ let current = null; // the mounted screen: { key, update }
 let addOnOpen = false; // a just-created list opens the quick-add sheet
 let homeScrollY = 0; // going back to the lists restores where you were, as iOS does
 let afterSwipe = null; // set when an edge swipe already animated the way back
+const expanded = new Set(); // items whose subtasks are shown inline
 
 function route() {
   const m = location.hash.match(/^#\/list\/([^/]+)$/);
-  return m ? { view: 'list', id: decodeURIComponent(m[1]) } : { view: 'home' };
+  if (m) return { view: 'list', id: decodeURIComponent(m[1]) };
+  const s = location.hash.match(/^#\/(today|upcoming)$/);
+  if (s) return { view: 'smart', id: s[1] };
+  return { view: 'home' };
 }
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -25,7 +30,7 @@ function render() {
     location.replace('#/');
     return;
   }
-  const key = r.view === 'list' ? `list:${r.id}` : 'home';
+  const key = r.view === 'home' ? 'home' : `${r.view}:${r.id}`;
   const swiped = afterSwipe;
   afterSwipe = null;
   if (current?.key === key) {
@@ -36,14 +41,14 @@ function render() {
 
   if (current?.key === 'home') homeScrollY = window.scrollY;
   const swap = () => {
-    current = r.view === 'list' ? mountList(r.id) : mountHome();
+    current = r.view === 'list' ? mountList(r.id) : r.view === 'smart' ? mountSmart(r.id) : mountHome();
     current.key = key;
     current.update();
     window.scrollTo(0, r.view === 'home' ? homeScrollY : 0);
   };
 
   if (current && !swiped && document.startViewTransition && !reduceMotion.matches && document.visibilityState === 'visible') {
-    document.documentElement.dataset.nav = r.view === 'list' ? 'push' : 'pop';
+    document.documentElement.dataset.nav = r.view === 'home' ? 'pop' : 'push';
     document.startViewTransition(swap);
   } else {
     swap();
@@ -164,13 +169,15 @@ function mountHome() {
 
   const largeTitle = h('h1', { class: 'large-title' }, 'Lists');
   const overview = h('p', { class: 'large-sub' });
+  const smartTiles = h('div', { class: 'smart-tiles' });
   main.replaceChildren(
     h('p', { class: 'eyebrow' }, greeting()),
     largeTitle,
     overview,
     installHint(),
+    smartTiles,
     h('div', { class: 'toolbar' },
-      searchField('Search lists', (v) => { query = v; fill(); }),
+      searchField('Search lists and items', (v) => { query = v; fill(); }),
       h('button', { type: 'button', class: 'chip', onclick: pickListSort, 'aria-label': 'Sort lists' }, icon('sort'), sortLabel),
     ),
     results,
@@ -206,7 +213,17 @@ function mountHome() {
           : h('p', { class: 'folder-empty' }, 'No lists in this folder yet')) : null));
     }
 
-    if (!out.length) out.push(emptyState('🔍', 'No matches', `Nothing named “${query.trim()}”.`));
+    // Searching also finds items in every list.
+    if (q) {
+      const hits = store.searchItems(query);
+      if (hits.length) {
+        out.push(h('section', { class: 'item-group search-items' },
+          h('h2', { class: 'section-title' }, 'Items', h('span', { class: 'section-count' }, hits.length)),
+          h('ul', { class: 'rows items' }, hits.map(({ list, item }) => itemRow(list.id, item, { showList: true })))));
+      }
+    }
+
+    if (!out.length) out.push(emptyState('🔍', 'No matches', `Nothing matches “${query.trim()}”.`));
     else if (!q) {
       out.push(h('button', { type: 'button', class: 'text-btn new-folder', onclick: newFolder }, icon('folderPlus'), 'New folder'));
     }
@@ -217,9 +234,25 @@ function mountHome() {
     update() {
       sortLabel.textContent = store.LIST_SORTS.find((s) => s.id === store.getState().prefs.listSort).short;
       overview.textContent = homeOverview();
+      fillSmartTiles(smartTiles);
       fill();
     },
   };
+}
+
+// Reminders-style tiles for the Today and Upcoming views.
+function fillSmartTiles(el) {
+  const c = store.dueCounts();
+  const tile = (id, iconName, label, count, note, warn) => h('button', {
+    type: 'button', class: `smart-tile smart-${id}`, onclick: () => { location.hash = `#/${id}`; },
+  },
+    h('span', { class: 'smart-top' }, h('span', { class: 'smart-icon' }, icon(iconName)), h('span', { class: 'smart-count' }, count)),
+    h('span', { class: 'smart-label' }, label),
+    note ? h('span', { class: `smart-note${warn ? ' warn' : ''}` }, note) : null);
+  el.replaceChildren(
+    tile('today', 'star', 'Today', c.today + c.overdue, c.overdue ? `${c.overdue} overdue` : c.today ? 'Due today' : 'All clear', c.overdue > 0),
+    tile('upcoming', 'calendar', 'Upcoming', c.upcoming, c.upcoming ? 'Scheduled' : 'Nothing scheduled', false),
+  );
 }
 
 function homeOverview() {
@@ -273,6 +306,7 @@ function listSummary(c) {
   const parts = [`${c.complete}/${c.total} done`];
   if (c.in_progress) parts.push(`${c.in_progress} in progress`);
   if (c.on_hold) parts.push(`${c.on_hold} on hold`);
+  if (c.overdue) parts.push(`${c.overdue} overdue ⚠️`);
   return parts.join(' · ');
 }
 
@@ -466,6 +500,64 @@ async function deleteList(id) {
   store.deleteList(id);
 }
 
+// ================= Today and Upcoming: items with due dates from every list =================
+
+function mountSmart(kind) {
+  const isToday = kind === 'today';
+  const name = isToday ? 'Today' : 'Upcoming';
+  const subtitle = h('p', { class: 'large-sub' });
+  const itemsEl = h('div');
+
+  document.title = name;
+  setScreenColor(isToday ? 'coral' : 'blue');
+  topbar.classList.remove('scrolled');
+  topbar.replaceChildren(h('div', { class: 'topbar-row' },
+    h('div', { class: 'topbar-side' },
+      h('button', { type: 'button', class: 'glass-btn back-btn', onclick: goHome }, icon('back'), h('span', {}, 'Lists'))),
+    h('div', { class: 'topbar-title' }, name),
+    h('div', { class: 'topbar-side end' }),
+  ));
+  const largeTitle = h('h1', { class: 'large-title' },
+    h('span', { class: `tile tile-lg c-${isToday ? 'coral' : 'blue'}` }, icon(isToday ? 'star' : 'calendar')), name);
+  main.replaceChildren(largeTitle, subtitle, itemsEl);
+  collapseTitleOnScroll(largeTitle);
+
+  const section = (title, entries, cls = '') => h('section', { class: 'item-group' },
+    h('h2', { class: `section-title ${cls}` }, title, h('span', { class: 'section-count' }, entries.length)),
+    h('ul', { class: 'rows items' }, entries.map(({ list, item }) => itemRow(list.id, item, { showList: true }))));
+
+  return {
+    update() {
+      const t = today();
+      const all = store.dueItems();
+      const out = [];
+      if (isToday) {
+        const overdue = all.filter(({ item }) => item.due < t && item.status !== 'complete');
+        const due = all.filter(({ item }) => item.due === t)
+          .sort((a, b) => (a.item.status === 'complete') - (b.item.status === 'complete'));
+        const left = due.filter(({ item }) => item.status !== 'complete').length;
+        subtitle.textContent = `${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`
+          + (overdue.length + left ? ` · ${overdue.length + left} to do` : '');
+        if (overdue.length) out.push(section('Overdue', overdue, 'overdue'));
+        if (due.length) out.push(section('Due today', due));
+        if (!out.length) out.push(emptyState('☀️', 'Nothing due today', 'Enjoy it. Give items a due date and they show up here.'));
+      } else {
+        const later = all.filter(({ item }) => item.due > t && item.status !== 'complete');
+        subtitle.textContent = later.length ? `${plural(later.length, 'item')} scheduled` : 'Nothing scheduled';
+        const days = [...new Set(later.map(({ item }) => item.due))];
+        for (const day of days) {
+          const entries = later.filter(({ item }) => item.due === day);
+          const n = Math.round((new Date(`${day}T00:00`) - new Date(`${t}T00:00`)) / 86400000);
+          const label = n <= 6 ? dueLabel(day) : new Date(`${day}T00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+          out.push(section(label, entries));
+        }
+        if (!out.length) out.push(emptyState('🗓️', 'Nothing scheduled', 'Items with a future due date show up here, by day.'));
+      }
+      itemsEl.replaceChildren(...out);
+    },
+  };
+}
+
 // ================= List screen: items =================
 
 function mountList(id) {
@@ -597,12 +689,55 @@ function mountList(id) {
   };
 }
 
-function itemRow(listId, item, { sortable = false } = {}) {
+// One item. showList adds the list's name (used in Today, Upcoming and search results).
+function itemRow(listId, item, { sortable = false, showList = false } = {}) {
   const status = store.statusInfo(item.status);
   const done = item.status === 'complete';
   const popped = poppedItemId === item.id;
   if (popped) poppedItemId = null;
-  const row = h('li', { class: `item s-${item.status}${popped ? ' pop' : ''}`, dataset: { id: item.id } },
+  const list = store.getList(listId);
+  const steps = item.subtasks;
+  const stepsDone = steps.filter((s) => s.done).length;
+  const open = expanded.has(item.id) && steps.length > 0;
+  const toggleSteps = () => {
+    if (expanded.has(item.id)) expanded.delete(item.id); else expanded.add(item.id);
+    current?.update();
+  };
+
+  const meta = h('div', { class: 'item-meta' },
+    h('button', {
+      type: 'button', class: 'item-status', 'aria-label': `Status: ${status.label}. Tap to change.`,
+      onclick: () => pickStatus(listId, item.id),
+    }, h('span', { class: 'dot' }), status.label),
+    item.due ? h('button', {
+      type: 'button', class: `meta-chip due due-${done ? 'done' : dueState(item.due)}`, 'aria-label': `Due ${dueLabel(item.due)}. Tap to change.`,
+      onclick: () => pickDue(listId, item.id),
+    }, icon('calendar'), dueLabel(item.due)) : null,
+    steps.length ? h('button', {
+      type: 'button', class: `meta-chip steps${stepsDone === steps.length ? ' all-done' : ''}`, 'aria-expanded': String(open),
+      'aria-label': `${stepsDone} of ${steps.length} steps done. Tap to ${open ? 'hide' : 'show'}.`, onclick: toggleSteps,
+    }, icon('steps'), `${stepsDone}/${steps.length}`) : null,
+    showList && list ? h('button', { type: 'button', class: `meta-chip from-list c-${list.color}`, onclick: () => openList(listId) },
+      list.emoji ? `${list.emoji} ` : '', list.name) : null,
+  );
+
+  const stepsEl = open ? h('ul', { class: 'steps-inline' },
+    steps.map((s) => h('li', { class: s.done ? 'done' : '' },
+      h('button', {
+        type: 'button', class: `sub-check${s.done ? ' done' : ''}`, 'aria-pressed': String(s.done), 'aria-label': s.text,
+        onclick: () => toggleStep(listId, item.id, s.id),
+      }, icon('check')),
+      h('span', { class: 'sub-label' }, s.text))),
+    h('li', { class: 'step-add' }, h('input', {
+      type: 'text', class: 'sub-text', placeholder: '+ Add a step', 'aria-label': 'Add a step', maxLength: 300, enterkeyhint: 'enter',
+      onkeydown: (e) => {
+        if (e.key !== 'Enter' || !e.target.value.trim()) return;
+        store.addSubtask(listId, item.id, e.target.value);
+        document.querySelector(`[data-id="${CSS.escape(item.id)}"] .step-add input`)?.focus();
+      },
+    }))) : null;
+
+  const inner = h('div', { class: 'item-inner' },
     h('button', {
       type: 'button', class: 'check', 'aria-label': done ? `Mark “${item.text}” not complete` : `Mark “${item.text}” complete`,
       onclick: () => setStatus(listId, item.id, done ? 'not_started' : 'complete', { tapped: true }),
@@ -611,15 +746,55 @@ function itemRow(listId, item, { sortable = false } = {}) {
       h('button', { type: 'button', class: 'item-main', onclick: () => editItem(listId, item.id) },
         h('span', { class: 'item-text' }, item.text),
         item.notes ? h('span', { class: 'item-notes' }, item.notes) : null),
-      h('button', {
-        type: 'button', class: 'item-status', 'aria-label': `Status: ${status.label}. Tap to change.`,
-        onclick: () => pickStatus(listId, item.id),
-      }, h('span', { class: 'dot' }), status.label),
+      meta,
+      stepsEl,
     ),
     sortable ? h('span', { class: 'drag-handle', title: 'Drag to reorder', 'aria-hidden': 'true' }, icon('grip')) : null,
   );
+
+  const row = h('li', { class: `item s-${item.status}${popped ? ' pop' : ''}`, dataset: { id: item.id } },
+    h('div', { class: 'swipe-bg', 'aria-hidden': 'true' },
+      h('span', { class: 'swipe-act act-right' }, icon(done ? 'back' : 'check'), done ? 'Undo' : 'Done'),
+      h('span', { class: 'swipe-act act-left' }, 'Delete', icon('trash'))),
+    inner,
+  );
   onLongPress(row, () => itemMenu(listId, item.id));
+  makeSwipeable(row, inner, {
+    onRight: () => setStatus(listId, item.id, done ? 'not_started' : 'complete', { tapped: true }),
+    onLeft: () => deleteItem(listId, item.id),
+  });
   return row;
+}
+
+function deleteItem(listId, itemId) {
+  const removed = store.removeItems(listId, (i) => i.id === itemId);
+  toast('Item deleted', { actionLabel: 'Undo', onAction: () => store.restoreItems(listId, removed) });
+}
+
+function toggleStep(listId, itemId, subId) {
+  const steps = store.toggleSubtask(listId, itemId, subId);
+  const item = store.getItem(listId, itemId);
+  if (steps.length && steps.every((s) => s.done) && item.status !== 'complete') {
+    toast('All steps done!', { actionLabel: 'Complete item', onAction: () => setStatus(listId, itemId, 'complete') });
+  }
+}
+
+async function pickDue(listId, itemId) {
+  const item = store.getItem(listId, itemId);
+  if (!item) return;
+  const choice = await actionSheet({
+    title: item.due ? `Due ${dueLabel(item.due)}` : 'Set a due date',
+    actions: [
+      ...quickDates().map((q) => ({ label: q.label, value: q.value, checked: q.value === item.due })),
+      { label: 'Pick a date…', value: '__pick__' },
+      item.due ? { label: 'Remove due date', value: '__none__', danger: true } : null,
+    ].filter(Boolean),
+  });
+  if (!choice) return;
+  if (choice === '__pick__') {
+    const v = await formDialog({ title: 'Due date', fields: [{ name: 'due', label: 'Date', type: 'date', value: item.due || today() }] });
+    if (v) store.updateItem(listId, itemId, { due: v.due });
+  } else store.updateItem(listId, itemId, { due: choice === '__none__' ? '' : choice });
 }
 
 // Move one item to the start or end of the list, in "My order".
@@ -638,6 +813,7 @@ async function itemMenu(listId, itemId) {
     title: item.text,
     actions: [
       ...store.STATUSES.map((s) => ({ label: s.label, value: s.id, checked: s.id === item.status })),
+      { label: item.due ? `Due date: ${dueLabel(item.due)}` : 'Set due date…', value: '__due__' },
       { label: 'Move to top', value: '__top__' },
       { label: 'Move to bottom', value: '__bottom__' },
       { label: 'Edit…', value: '__edit__' },
@@ -646,11 +822,10 @@ async function itemMenu(listId, itemId) {
   });
   if (!choice) return;
   if (choice === '__top__' || choice === '__bottom__') moveItemToEdge(listId, itemId, choice === '__top__' ? 'top' : 'bottom');
+  else if (choice === '__due__') pickDue(listId, itemId);
   else if (choice === '__edit__') editItem(listId, itemId);
-  else if (choice === '__delete__') {
-    const removed = store.removeItems(listId, (i) => i.id === itemId);
-    toast('Item deleted', { actionLabel: 'Undo', onAction: () => store.restoreItems(listId, removed) });
-  } else if (choice !== item.status) setStatus(listId, itemId, choice);
+  else if (choice === '__delete__') deleteItem(listId, itemId);
+  else if (choice !== item.status) setStatus(listId, itemId, choice);
 }
 
 // Todoist-style quick add: a bottom sheet that stays open so you can add several items in a row.
@@ -670,6 +845,21 @@ function quickAdd(listId, getQuery) {
   }, h('span', { class: 'dot' }), s.label)));
   fillStatuses();
 
+  // Due date: quick chips plus the native date picker. It sticks between items, like the status.
+  const dueInput = h('input', { type: 'date', class: 'chip date-input', 'aria-label': 'Due date' });
+  const dueRow = h('div', { class: 'quick-statuses quick-due', role: 'group', 'aria-label': 'Due date' });
+  const fillDue = () => dueRow.replaceChildren(
+    h('span', { class: 'quick-due-icon' }, icon('calendar')),
+    h('button', { type: 'button', class: `chip${dueInput.value ? '' : ' active'}`, onclick: () => { dueInput.value = ''; fillDue(); input.focus(); } }, 'No date'),
+    ...quickDates().map((q) => h('button', {
+      type: 'button', class: `chip${dueInput.value === q.value ? ' active' : ''}`,
+      onclick: () => { dueInput.value = q.value; fillDue(); input.focus(); },
+    }, q.label)),
+    dueInput,
+  );
+  dueInput.addEventListener('change', fillDue);
+  fillDue();
+
   let close;
   const form = h('form', {
     class: 'quick-add', role: 'dialog', 'aria-label': 'Add item',
@@ -677,8 +867,7 @@ function quickAdd(listId, getQuery) {
       e.preventDefault();
       const text = input.value.trim();
       if (!text) { close(); return; }
-      const item = store.addItem(listId, text);
-      if (item && status !== 'not_started') store.updateItem(listId, item.id, { status });
+      store.addItem(listId, text, { status, due: dueInput.value });
       added++;
       const cheers = ['Got it ✓', 'Keep going!', 'On a roll 🔥', 'Nice and tidy ✨', 'Look at you go 🚀'];
       counter.textContent = `${plural(added, 'item')} added · ${cheers[Math.min(added - 1, cheers.length - 1)]}`;
@@ -692,6 +881,7 @@ function quickAdd(listId, getQuery) {
   },
     input,
     statusRow,
+    dueRow,
     h('div', { class: 'quick-actions' },
       counter,
       h('button', { type: 'button', class: 'btn', onclick: () => close() }, 'Done'),
@@ -729,18 +919,22 @@ async function editItem(listId, itemId) {
     fields: [
       { name: 'text', label: 'Item', value: item.text, required: true },
       { name: 'status', label: 'Status', type: 'select', value: item.status, options: store.STATUSES.map((s) => ({ value: s.id, label: s.label })) },
+      { name: 'due', label: 'Due date', type: 'date', value: item.due },
+      { name: 'subtasks', label: 'Steps', type: 'subtasks', value: item.subtasks },
       { name: 'notes', label: 'Notes', type: 'textarea', value: item.notes, placeholder: 'Optional' },
     ],
     extraActions: [{ label: 'Delete', value: 'delete', danger: true }],
   });
   if (!v) return;
   if (v._action === 'delete') {
-    const removed = store.removeItems(listId, (i) => i.id === itemId);
-    toast('Item deleted', { actionLabel: 'Undo', onAction: () => store.restoreItems(listId, removed) });
+    deleteItem(listId, itemId);
     return;
   }
   const patch = {};
-  for (const key of ['text', 'notes']) if (v[key] !== item[key]) patch[key] = v[key];
+  for (const key of ['text', 'notes', 'due']) if (v[key] !== item[key]) patch[key] = v[key];
+  if (JSON.stringify(v.subtasks.map((s) => [s.text, s.done])) !== JSON.stringify(item.subtasks.map((s) => [s.text, s.done]))) {
+    patch.subtasks = v.subtasks;
+  }
   if (Object.keys(patch).length) store.updateItem(listId, itemId, patch);
   if (v.status !== item.status) setStatus(listId, itemId, v.status);
 }
@@ -805,7 +999,7 @@ render();
 
 enableEdgeSwipeBack({
   layers: () => [topbar, main],
-  canStart: () => route().view === 'list' && !overlayRoot.childElementCount,
+  canStart: () => route().view !== 'home' && !overlayRoot.childElementCount,
   onBack: (resetLayers) => {
     afterSwipe = resetLayers;
     goHome();

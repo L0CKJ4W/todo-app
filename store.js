@@ -1,6 +1,8 @@
 // Data store: folders, lists and items, saved in this device's localStorage only.
 // Nothing here talks to a server.
 
+import { isDay, today } from './dates.js';
+
 const KEY = 'todo-app/v1';
 
 export const STATUSES = [
@@ -18,6 +20,7 @@ export const ITEM_SORTS = [
   { id: 'manual', label: 'My order (drag to arrange)', short: 'My order' },
   { id: 'added', label: 'Date added (oldest first)', short: 'Oldest' },
   { id: 'newest', label: 'Date added (newest first)', short: 'Newest' },
+  { id: 'due', label: 'Due date (soonest first)', short: 'Due' },
   { id: 'updated', label: 'Recently changed', short: 'Changed' },
   { id: 'name', label: 'Name (A–Z)', short: 'A–Z' },
   { id: 'status', label: 'Status (grouped)', short: 'Status' },
@@ -45,6 +48,13 @@ function colorFor(id) {
   let hash = 0;
   for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   return LIST_COLORS[hash % LIST_COLORS.length].id;
+}
+
+function cleanSubtasks(v) {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((s) => s && typeof s.text === 'string' && s.text.trim())
+    .map((s) => ({ id: typeof s.id === 'string' ? s.id : uid(), text: s.text.trim(), done: !!s.done }));
 }
 
 const cleanEmoji = (v) => (typeof v === 'string' && v.trim().length <= 16 ? v.trim() : '');
@@ -102,6 +112,8 @@ export function parseBackup(raw) {
       text: str(i.text),
       notes: str(i.notes),
       status: STATUS_IDS.has(i.status) ? i.status : 'not_started',
+      due: isDay(i.due) ? i.due : '',
+      subtasks: cleanSubtasks(i.subtasks),
       createdAt: time(i.createdAt),
       updatedAt: time(i.updatedAt),
     })),
@@ -161,8 +173,12 @@ export function sortedFolders() {
 }
 
 export function counts(list) {
-  const c = { total: list.items.length, not_started: 0, in_progress: 0, on_hold: 0, complete: 0 };
-  for (const i of list.items) c[i.status]++;
+  const c = { total: list.items.length, not_started: 0, in_progress: 0, on_hold: 0, complete: 0, overdue: 0 };
+  const t = today();
+  for (const i of list.items) {
+    c[i.status]++;
+    if (i.due && i.due < t && i.status !== 'complete') c.overdue++;
+  }
   return c;
 }
 
@@ -186,6 +202,7 @@ export function sortItems(items, sort) {
     case 'newest': return out.sort((a, b) => b.createdAt - a.createdAt);
     case 'updated': return out.sort((a, b) => b.updatedAt - a.updatedAt);
     case 'name': return out.sort((a, b) => collator.compare(a.text, b.text));
+    case 'due': return out.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || a.createdAt - b.createdAt);
     case 'status': return out.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.createdAt - b.createdAt);
     case 'manual': return out; // the order items are stored in is your custom order
     default: return out.sort((a, b) => a.createdAt - b.createdAt);
@@ -249,11 +266,14 @@ export function deleteList(id) {
 
 // ---- Items ----
 
-export function addItem(listId, text) {
+export function addItem(listId, text, { status = 'not_started', due = '' } = {}) {
   const list = getList(listId);
   if (!list) return null;
   const now = Date.now();
-  const item = { id: uid(), text, notes: '', status: 'not_started', createdAt: now, updatedAt: now };
+  const item = {
+    id: uid(), text, notes: '', status: STATUS_IDS.has(status) ? status : 'not_started',
+    due: isDay(due) ? due : '', subtasks: [], createdAt: now, updatedAt: now,
+  };
   list.items.push(item);
   commit();
   return item;
@@ -262,8 +282,62 @@ export function addItem(listId, text) {
 export function updateItem(listId, itemId, patch) {
   const item = getItem(listId, itemId);
   if (!item) return;
+  if ('due' in patch && !isDay(patch.due)) patch.due = '';
+  if ('subtasks' in patch) patch.subtasks = cleanSubtasks(patch.subtasks);
   Object.assign(item, patch, { updatedAt: Date.now() });
   commit();
+}
+
+export function addSubtask(listId, itemId, text) {
+  const item = getItem(listId, itemId);
+  if (!item || !text.trim()) return;
+  updateItem(listId, itemId, { subtasks: [...item.subtasks, { id: uid(), text: text.trim(), done: false }] });
+}
+
+// Returns the item's subtasks after the change.
+export function toggleSubtask(listId, itemId, subId) {
+  const item = getItem(listId, itemId);
+  if (!item) return [];
+  updateItem(listId, itemId, { subtasks: item.subtasks.map((s) => (s.id === subId ? { ...s, done: !s.done } : s)) });
+  return getItem(listId, itemId).subtasks;
+}
+
+// Every item with a due date, across all lists, with the list it belongs to, soonest first.
+export function dueItems() {
+  const out = [];
+  for (const list of state.lists) {
+    for (const item of list.items) if (item.due) out.push({ list, item });
+  }
+  return out.sort((a, b) => a.item.due.localeCompare(b.item.due) || a.item.createdAt - b.item.createdAt);
+}
+
+export function dueCounts() {
+  const t = today();
+  const c = { overdue: 0, today: 0, upcoming: 0 };
+  for (const { item } of dueItems()) {
+    if (item.status === 'complete') continue;
+    if (item.due < t) c.overdue++;
+    else if (item.due === t) c.today++;
+    else c.upcoming++;
+  }
+  return c;
+}
+
+// Items whose text or notes match, across all lists.
+export function searchItems(query, limit = 50) {
+  const q = query.trim().toLocaleLowerCase();
+  if (!q) return [];
+  const out = [];
+  for (const list of state.lists) {
+    for (const item of list.items) {
+      if (item.text.toLocaleLowerCase().includes(q) || item.notes.toLocaleLowerCase().includes(q)
+        || item.subtasks.some((s) => s.text.toLocaleLowerCase().includes(q))) {
+        out.push({ list, item });
+        if (out.length >= limit) return out;
+      }
+    }
+  }
+  return out;
 }
 
 // Moves items within a list. `visibleIds` is the new order of the items currently on screen

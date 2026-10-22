@@ -42,6 +42,84 @@ export function onLongPress(el, fn, { delay = 450 } = {}) {
   });
 }
 
+// Swipe a row sideways, as in Mail and Reminders: right runs onRight, left runs onLeft.
+// `inner` slides; the row's .swipe-bg shows the action underneath and lights up once
+// the swipe is far enough to count.
+export function makeSwipeable(row, inner, { onRight, onLeft }) {
+  const ARM = 90;
+  let start = null;
+  let active = false;
+  let dx = 0;
+  let swallowClick = false;
+
+  const setSide = (side) => {
+    row.classList.toggle('swipe-right', side === 'right');
+    row.classList.toggle('swipe-left', side === 'left');
+  };
+
+  row.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    // Leave the left edge to swipe-back and the grip to dragging.
+    if (e.touches.length !== 1 || t.clientX < 32 || e.target.closest('.drag-handle, input, textarea')) return;
+    start = { x: t.clientX, y: t.clientY };
+    active = false;
+    dx = 0;
+  }, { passive: true });
+
+  row.addEventListener('touchmove', (e) => {
+    if (!start) return;
+    const t = e.touches[0];
+    const mx = t.clientX - start.x;
+    const my = t.clientY - start.y;
+    if (!active) {
+      if (Math.abs(my) > 10 && Math.abs(my) > Math.abs(mx)) { start = null; return; }
+      if (Math.abs(mx) < 12) return;
+      if ((mx > 0 && !onRight) || (mx < 0 && !onLeft)) { start = null; return; }
+      active = true;
+      row.classList.add('swiping-row', 'pressed-off');
+    }
+    e.preventDefault();
+    const sign = Math.sign(mx);
+    const abs = Math.abs(mx);
+    dx = sign * (abs < 160 ? abs : 160 + (abs - 160) * 0.3); // rubber-band past 160px
+    inner.style.transition = 'none';
+    inner.style.transform = `translateX(${dx}px)`;
+    setSide(dx > 0 ? 'right' : 'left');
+    row.classList.toggle('armed', Math.abs(dx) > ARM);
+  }, { passive: false });
+
+  const end = () => {
+    if (!start) return;
+    start = null;
+    if (!active) return;
+    active = false;
+    swallowClick = true;
+    setTimeout(() => { swallowClick = false; }, 350);
+    const armed = Math.abs(dx) > ARM;
+    inner.style.transition = 'transform 0.25s cubic-bezier(0.2, 0.85, 0.25, 1)';
+    const reset = () => {
+      inner.style.transform = '';
+      setTimeout(() => row.classList.remove('swiping-row', 'armed', 'swipe-left', 'swipe-right', 'pressed-off'), 250);
+    };
+    if (armed && dx < 0) {
+      inner.style.transform = 'translateX(-110%)';
+      setTimeout(() => { onLeft(); reset(); }, 200);
+    } else if (armed && dx > 0) {
+      reset();
+      onRight(); // inside the touch event, so the iOS haptic can fire
+    } else {
+      reset();
+    }
+  };
+  row.addEventListener('touchend', end);
+  row.addEventListener('touchcancel', end);
+  row.addEventListener('click', (e) => {
+    if (!swallowClick) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+}
+
 // Drag rows by their .drag-handle to reorder them. Rows are the list's direct children and carry
 // data-id. The dragged row follows the finger, the others slide out of its way, and the page
 // scrolls when you drag near the top or bottom. onMove(ids) gets the new order of all rows.

@@ -431,11 +431,38 @@ main {
 
 .item {
   position: relative;
-  display: flex;
-  align-items: flex-start;
   min-height: 52px;
 }
-.item + .item::before { left: 40px; }
+.item + .item::before { left: 40px; z-index: 2; }
+.item-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+}
+
+/* Swipe actions: the row slides to reveal Done (right) or Delete (left) underneath. */
+.swipe-bg {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 22px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  border-radius: 14px;
+}
+.swiping-row { overflow: hidden; }
+.swiping-row .swipe-bg { display: flex; }
+.swiping-row .item-inner { background: var(--bg); }
+.swipe-act { display: inline-flex; align-items: center; gap: 6px; opacity: 0.55; transform: scale(0.9); transition: opacity 0.15s ease, transform 0.15s ease; }
+.swipe-right .swipe-bg { background: var(--s-done); }
+.swipe-left .swipe-bg { background: var(--danger); }
+.swipe-right .act-left, .swipe-left .act-right { visibility: hidden; }
+.s-complete.swipe-right .swipe-bg { background: var(--s-not); }
+.armed .swipe-act { opacity: 1; transform: scale(1.05); }
 
 .check {
   width: 40px;
@@ -508,17 +535,102 @@ main {
 }
 .s-complete .item-text { color: var(--muted); text-decoration: line-through; }
 
-.item-status {
+.item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; }
+.item-status, .meta-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 5px;
   padding: 2px 0;
   font-size: 13px;
   font-weight: 500;
   color: var(--sc);
 }
 .s-not_started .item-status { color: var(--muted); }
+.meta-chip { color: var(--muted); }
+.meta-chip .icon svg { width: 14px; height: 14px; }
+.due-overdue { color: var(--danger); font-weight: 600; }
+.due-today { color: var(--c-orange); font-weight: 600; }
+.due-soon { color: var(--c-blue); }
+.steps.all-done { color: var(--s-done); }
+.from-list { color: var(--tc); font-weight: 600; }
+
+/* Subtasks shown under an item */
+.steps-inline { list-style: none; margin: 8px 0 0; padding: 0; }
+.steps-inline li { display: flex; align-items: center; gap: 10px; min-height: 34px; }
+.steps-inline li.done .sub-label { color: var(--muted); text-decoration: line-through; }
+.sub-label { font-size: 15px; overflow-wrap: anywhere; }
+.sub-check {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 6px;
+  border: 1.75px solid var(--muted);
+  display: grid;
+  place-items: center;
+  color: transparent;
+}
+.sub-check .icon svg { width: 13px; height: 13px; stroke-width: 3; }
+.sub-check.done { background: var(--accent); border-color: var(--accent); color: #fff; }
+.step-add .sub-text, .subtask-editor .sub-text {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  font-size: 15px;
+  padding: 6px 0;
+  outline: none;
+}
+.step-add { padding-left: 30px; }
+.step-add .sub-text::placeholder { color: var(--muted); }
+
+/* Subtask editor in the Edit item dialog */
+.subtask-editor { list-style: none; margin: 0 0 6px; padding: 0; }
+.subtask-editor li { display: flex; align-items: center; gap: 10px; border-bottom: 0.5px solid var(--sep); }
+.sub-remove { width: 32px; height: 32px; font-size: 20px; color: var(--muted); flex: none; }
+
+/* Date picker field: quick chips plus the native picker */
+.date-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.date-chips .chip { height: 30px; font-size: 14px; }
+.date-field { min-height: 44px; }
+.quick-due { margin-top: 8px; align-items: center; }
+.quick-due-icon { display: inline-flex; color: var(--muted); flex: none; }
+.quick-due-icon .icon svg { width: 18px; height: 18px; }
+.date-input { width: auto; border: 0; font-size: 14px; color: var(--text); -webkit-appearance: none; appearance: none; min-width: 120px; }
+
+/* Today / Upcoming tiles on the home screen */
+.smart-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+.smart-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--tc) 12%, var(--bg));
+  text-align: left;
+  transition: transform 0.12s ease;
+}
+.smart-tile:active { transform: scale(0.97); }
+.smart-today { --tc: var(--c-coral); }
+.smart-upcoming { --tc: var(--c-blue); }
+.smart-top { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.smart-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--tc);
+  color: #fff;
+}
+.smart-icon .icon svg { width: 18px; height: 18px; }
+.smart-count { font-family: var(--rounded); font-size: 28px; font-weight: 800; line-height: 1; }
+.smart-label { margin-top: 6px; font-family: var(--rounded); font-weight: 700; color: var(--tc); }
+.smart-note { font-size: 13px; color: var(--muted); }
+.smart-note.warn { color: var(--danger); font-weight: 600; }
+.tile .icon svg { width: 26px; height: 26px; }
+.section-title.overdue { color: var(--danger); }
+.search-items { margin-top: 26px; }
 
 .item-group { margin-top: 18px; }
 .section-title {

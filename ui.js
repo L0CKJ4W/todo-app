@@ -1,5 +1,7 @@
 // Small DOM helpers: element builder, icons, dialogs, action sheets and toasts.
 
+import { quickDates } from './dates.js';
+
 export function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
   let value;
@@ -32,6 +34,11 @@ const ICONS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
   grip: '<path d="M5 9h14M5 15h14"/>',
+  calendar: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  steps: '<path d="M10 7h10M10 12h10M10 17h10"/><path d="M4 7l1.2 1.2L7.5 6M4 12l1.2 1.2L7.5 11"/><circle cx="5.5" cy="17" r="1.3"/>',
+  trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>',
+  star: '<path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 16.4 7.2 18.9l.9-5.4-3.9-3.8 5.4-.8z"/>',
+  upcoming: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M8 14h2M12 14h2M16 14h0M8 17h2"/>',
   filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
 };
 
@@ -110,6 +117,16 @@ export function formDialog({ title, fields, okLabel = 'Save', extraActions = [] 
     const inputs = {};
     const rows = fields.map((f) => {
       let input;
+      if (f.type === 'date') {
+        input = h('input', { type: 'date', class: 'field date-field', value: f.value ?? '' });
+        inputs[f.name] = input;
+        return h('div', { class: 'form-row' }, h('span', { class: 'form-label' }, f.label), datePicker(input));
+      }
+      if (f.type === 'subtasks') {
+        const editor = subtaskEditor(f.value || []);
+        inputs[f.name] = editor;
+        return h('div', { class: 'form-row' }, h('span', { class: 'form-label' }, f.label), editor);
+      }
       if (f.type === 'colors' || f.type === 'emoji') {
         // A hidden input holds the value; the swatches/emoji buttons set it.
         input = h('input', { type: 'hidden', value: f.value ?? '' });
@@ -132,7 +149,10 @@ export function formDialog({ title, fields, okLabel = 'Save', extraActions = [] 
 
     const collect = () => {
       const out = {};
-      for (const f of fields) out[f.name] = f.type === 'select' ? inputs[f.name].value : inputs[f.name].value.trim();
+      for (const f of fields) {
+        const v = inputs[f.name].value;
+        out[f.name] = typeof v === 'string' && f.type !== 'select' ? v.trim() : v;
+      }
       return out;
     };
     let close;
@@ -168,6 +188,65 @@ export function formDialog({ title, fields, okLabel = 'Save', extraActions = [] 
     const first = fields.find((f) => !f.type || f.type === 'text' || f.type === 'textarea');
     if (first) inputs[first.name].focus();
   });
+}
+
+// Native date input plus one-tap chips: Today, Tomorrow, Next week, None.
+function datePicker(input) {
+  const chips = h('div', { class: 'date-chips' });
+  const fill = () => chips.replaceChildren(
+    ...quickDates().map((q) => h('button', {
+      type: 'button', class: `chip${input.value === q.value ? ' active' : ''}`,
+      onclick: () => { input.value = q.value; fill(); },
+    }, q.label)),
+    h('button', { type: 'button', class: `chip${input.value ? '' : ' active'}`, onclick: () => { input.value = ''; fill(); } }, 'None'),
+  );
+  input.addEventListener('change', fill);
+  fill();
+  return h('div', { class: 'date-picker' }, chips, input);
+}
+
+// Editable checklist. Its .value is the array of { id, text, done }.
+function subtaskEditor(initial) {
+  const listEl = h('ul', { class: 'subtask-editor' });
+  const addRow = (s) => {
+    const done = h('button', {
+      type: 'button', class: `sub-check${s.done ? ' done' : ''}`, 'aria-label': 'Done', 'aria-pressed': String(!!s.done),
+      onclick: () => {
+        const on = done.getAttribute('aria-pressed') !== 'true';
+        done.setAttribute('aria-pressed', String(on));
+        done.classList.toggle('done', on);
+      },
+    }, icon('check'));
+    const text = h('input', { type: 'text', class: 'sub-text', value: s.text, maxLength: 300, 'aria-label': 'Step' });
+    const row = h('li', { dataset: { id: s.id || '' } }, done, text,
+      h('button', { type: 'button', class: 'sub-remove', 'aria-label': 'Remove step', onclick: () => row.remove() }, '×'));
+    listEl.append(row);
+  };
+  initial.forEach(addRow);
+
+  const adder = h('input', { type: 'text', class: 'field sub-add', placeholder: '+ Add a step', 'aria-label': 'Add a step', maxLength: 300, enterkeyhint: 'enter' });
+  adder.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault(); // Enter adds a step instead of saving the dialog
+    if (!adder.value.trim()) return;
+    addRow({ text: adder.value.trim(), done: false });
+    adder.value = '';
+  });
+
+  const editor = h('div', { class: 'subtasks-field' }, listEl, adder);
+  Object.defineProperty(editor, 'value', {
+    get: () => {
+      const rows = [...listEl.children].map((li) => ({
+        id: li.dataset.id || undefined,
+        text: li.querySelector('.sub-text').value.trim(),
+        done: li.querySelector('.sub-check').getAttribute('aria-pressed') === 'true',
+      }));
+      // A step typed but not yet added with Enter still counts.
+      if (adder.value.trim()) rows.push({ text: adder.value.trim(), done: false });
+      return rows.filter((r) => r.text);
+    },
+  });
+  return editor;
 }
 
 function colorPicker(field, hidden) {
