@@ -22,6 +22,32 @@ export const ITEM_SORTS = [
   { id: 'status', label: 'Status (grouped)', short: 'Status' },
 ];
 
+// Each list gets a color and an emoji, like the colored capsules in Structured.
+export const LIST_COLORS = [
+  { id: 'coral', label: 'Coral' },
+  { id: 'orange', label: 'Orange' },
+  { id: 'sun', label: 'Sunflower' },
+  { id: 'green', label: 'Green' },
+  { id: 'teal', label: 'Teal' },
+  { id: 'blue', label: 'Blue' },
+  { id: 'violet', label: 'Violet' },
+  { id: 'pink', label: 'Pink' },
+  { id: 'slate', label: 'Slate' },
+];
+const COLOR_IDS = new Set(LIST_COLORS.map((c) => c.id));
+
+export const EMOJI_CHOICES = ['📋', '✅', '🛒', '🏠', '💼', '💡', '🎯', '📚', '🏋️', '🍳', '✈️', '🎁',
+  '💰', '🧹', '🌱', '🎮', '🎨', '🐾', '❤️', '🔧', '📅', '🎵', '🚗', '⭐'];
+
+// Stable fallback color for lists made before colors existed.
+function colorFor(id) {
+  let hash = 0;
+  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return LIST_COLORS[hash % LIST_COLORS.length].id;
+}
+
+const cleanEmoji = (v) => (typeof v === 'string' && v.trim().length <= 16 ? v.trim() : '');
+
 export const LIST_SORTS = [
   { id: 'name', label: 'Name (A–Z)', short: 'A–Z' },
   { id: 'newest', label: 'Newest first', short: 'Newest' },
@@ -65,6 +91,8 @@ export function parseBackup(raw) {
     id: l.id,
     name: str(l.name, 'List'),
     folderId: folderIds.has(l.folderId) ? l.folderId : null,
+    color: COLOR_IDS.has(l.color) ? l.color : colorFor(l.id),
+    emoji: cleanEmoji(l.emoji),
     createdAt: time(l.createdAt),
     sort: ITEM_SORTS.some((s) => s.id === l.sort) ? l.sort : 'added',
     statusFilter: Array.isArray(l.statusFilter) ? l.statusFilter.filter((s) => STATUS_IDS.has(s)) : [],
@@ -187,9 +215,15 @@ export function deleteFolder(id, { deleteLists = false } = {}) {
 
 // ---- Lists ----
 
-export function createList(name, folderId = null) {
+// The next color in the palette, so new lists don't all look the same.
+export function nextColor() {
+  return LIST_COLORS[state.lists.length % LIST_COLORS.length].id;
+}
+
+export function createList(name, folderId = null, { color, emoji } = {}) {
   const list = {
     id: uid(), name, folderId: getFolder(folderId) ? folderId : null,
+    color: COLOR_IDS.has(color) ? color : nextColor(), emoji: cleanEmoji(emoji),
     createdAt: Date.now(), sort: 'added', statusFilter: [], items: [],
   };
   state.lists.push(list);
@@ -200,6 +234,8 @@ export function createList(name, folderId = null) {
 export function updateList(id, patch) {
   const list = getList(id);
   if (!list) return;
+  if ('color' in patch && !COLOR_IDS.has(patch.color)) delete patch.color;
+  if ('emoji' in patch) patch.emoji = cleanEmoji(patch.emoji);
   Object.assign(list, patch);
   commit();
 }

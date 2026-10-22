@@ -1,8 +1,20 @@
 /* Look based on Things 3 and Todoist (iOS): large left-aligned titles, flat rows on a plain
-   background, progress pies, status-colored rings, round floating buttons. */
+   background, progress pies, status-colored rings, round floating buttons.
+   Personality from Structured: a warm coral signature color, a color and emoji per list,
+   rounded type, friendly wording, and a little celebration when a list is finished. */
 
 :root {
   color-scheme: light dark;
+  --c-coral: #ff6b5e;
+  --c-orange: #ff9230;
+  --c-sun: #f2b705;
+  --c-green: #22b867;
+  --c-teal: #12a99a;
+  --c-blue: #3d8bfd;
+  --c-violet: #8b6cf6;
+  --c-pink: #ef5ba1;
+  --c-slate: #73839b;
+  --rounded: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --bg: #ffffff;
   --surface: #ffffff;
   --raised: #ffffff;
@@ -12,9 +24,9 @@
   --text: #1c1c1e;
   --muted: #8a8a8e;
   --sep: rgba(60, 60, 67, 0.14);
-  --fill: #f1f1f4;
-  --field: #f1f1f4;
-  --accent: #2f7cf6;
+  --fill: #f3f2f0;
+  --field: #f3f2f0;
+  --accent: var(--c-coral);
   --danger: #e5484d;
   --s-not: #a1a1a6;
   --s-prog: #2f7cf6;
@@ -37,8 +49,15 @@
     --sep: rgba(84, 84, 88, 0.5);
     --fill: #1c1c1e;
     --field: #1c1c1e;
-    --accent: #4b91ff;
     --danger: #ff5c5f;
+    --c-coral: #ff7a6e;
+    --c-sun: #f7c331;
+    --c-green: #34cc7a;
+    --c-teal: #2cc2b2;
+    --c-blue: #5a9cff;
+    --c-violet: #9d84ff;
+    --c-pink: #ff6fb2;
+    --c-slate: #8d9bb0;
     --s-not: #7c7c82;
     --s-prog: #4b91ff;
     --s-hold: #ffa95c;
@@ -76,6 +95,14 @@ input, textarea {
   -webkit-touch-callout: default;
 }
 img, svg { -webkit-user-drag: none; }
+[hidden] { display: none !important; }
+
+/* A soft wash of the list's color behind the top of the list screen. */
+html.tinted body {
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--accent) 14%, var(--bg)) 0, var(--bg) 340px) no-repeat,
+    var(--bg);
+}
 
 button {
   font: inherit;
@@ -175,27 +202,91 @@ main {
   padding: 0 max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left));
 }
 
+.eyebrow {
+  margin: 6px 0 0;
+  font-family: var(--rounded);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 .large-title {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 4px 0 2px;
-  font-size: 32px;
-  font-weight: 700;
+  gap: 12px;
+  margin: 2px 0 2px;
+  font-family: var(--rounded);
+  font-size: 34px;
+  font-weight: 800;
   letter-spacing: -0.01em;
-  line-height: 1.15;
+  line-height: 1.12;
   min-width: 0;
 }
 .title-btn {
-  font-weight: 700;
+  font-weight: 800;
   text-align: left;
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.title-pie { display: inline-flex; color: var(--accent); }
-.title-pie .pie, .title-pie .pie svg { width: 26px; height: 26px; }
+.title-tile { display: inline-flex; }
 
-.large-sub { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+.large-sub { margin: 4px 0 0; color: var(--muted); font-size: 15px; }
+
+.list-progress {
+  height: 6px;
+  margin-top: 12px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  overflow: hidden;
+}
+.list-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s cubic-bezier(0.2, 0.85, 0.25, 1);
+}
+
+.done-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--s-done) 14%, transparent);
+  font-size: 15px;
+  animation: rise 0.4s cubic-bezier(0.2, 0.85, 0.25, 1);
+}
+.done-emoji { font-size: 24px; }
+
+/* Color tile with the list's emoji (or progress pie). */
+.tile {
+  --tc: var(--c-slate);
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--tc) 18%, transparent);
+  color: var(--tc);
+}
+.tile-emoji { font-size: 21px; line-height: 1; }
+.tile .pie, .tile .pie svg { width: 22px; height: 22px; }
+.tile-lg { width: 48px; height: 48px; border-radius: 15px; }
+.tile-lg .tile-emoji { font-size: 27px; }
+.tile-lg .pie, .tile-lg .pie svg { width: 28px; height: 28px; }
+
+.c-coral { --tc: var(--c-coral); }
+.c-orange { --tc: var(--c-orange); }
+.c-sun { --tc: var(--c-sun); }
+.c-green { --tc: var(--c-green); }
+.c-teal { --tc: var(--c-teal); }
+.c-blue { --tc: var(--c-blue); }
+.c-violet { --tc: var(--c-violet); }
+.c-pink { --tc: var(--c-pink); }
+.c-slate { --tc: var(--c-slate); }
 
 .toolbar { display: flex; gap: 8px; align-items: center; margin: 16px 0 10px; }
 
@@ -276,7 +367,7 @@ main {
   content: "";
   position: absolute;
   top: 0;
-  left: 40px;
+  left: 52px;
   right: 0;
   border-top: 0.5px solid var(--sep);
 }
@@ -295,12 +386,11 @@ main {
   transition: background-color 0.2s ease;
 }
 .row-main:active, .row.pressed .row-main { background: var(--fill); transition: none; }
-.row .pie { color: var(--accent); }
 .pie, .pie svg { width: 24px; height: 24px; display: block; flex: none; }
 .pie-full { color: var(--s-done) !important; }
 
 .row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.row-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-title { font-family: var(--rounded); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-sub { font-size: 13px; color: var(--muted); }
 .row-count { color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
 .row .icon-btn { margin-right: -10px; }
@@ -318,10 +408,10 @@ main {
   text-align: left;
 }
 .folder-toggle > .icon { color: var(--accent); }
-.folder-name { font-weight: 700; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-name { font-family: var(--rounded); font-weight: 800; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folder-count { color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }
 .folder-header .icon-btn { margin-right: -10px; }
-.folder-empty { margin: 0; padding: 14px 0 4px 40px; color: var(--muted); font-size: 15px; }
+.folder-empty { margin: 0; padding: 14px 0 4px 52px; color: var(--muted); font-size: 15px; }
 
 .chev { display: inline-flex; color: var(--muted); transition: transform 0.15s ease; }
 .chev .icon svg { width: 16px; height: 16px; }
@@ -370,6 +460,8 @@ main {
 .s-on_hold .ring { border-style: dashed; }
 .s-complete .ring { background: var(--sc); }
 .ring .icon svg { width: 14px; height: 14px; stroke-width: 3; }
+.pop .ring { animation: pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.pop .item-text { animation: fade-done 0.4s ease; }
 
 .item-body { flex: 1; min-width: 0; padding: 12px 0 10px; }
 
@@ -418,8 +510,9 @@ main {
 }
 .section-count { color: var(--muted); font-weight: 400; font-size: 14px; }
 
-.empty { text-align: center; padding: 56px 24px; color: var(--muted); }
-.empty-title { margin: 0 0 4px; font-size: 20px; font-weight: 600; color: var(--text); }
+.empty { text-align: center; padding: 48px 24px; color: var(--muted); animation: rise 0.4s ease; }
+.empty-emoji { font-size: 52px; line-height: 1; margin-bottom: 12px; }
+.empty-title { margin: 0 0 4px; font-family: var(--rounded); font-size: 21px; font-weight: 800; color: var(--text); }
 .empty-text { margin: 0; }
 
 .hint {
@@ -527,7 +620,31 @@ textarea.field { resize: vertical; }
   transition: transform 0.15s ease;
 }
 .open .dialog { transform: none; }
-.dialog-title { margin: 0 0 14px; font-size: 18px; font-weight: 700; }
+.dialog-title { margin: 0 0 14px; font-family: var(--rounded); font-size: 20px; font-weight: 800; }
+
+.swatches { display: flex; flex-wrap: wrap; gap: 10px; padding: 2px; }
+.swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tc);
+  box-shadow: 0 0 0 0 var(--raised), 0 0 0 0 var(--tc);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 3px var(--raised), 0 0 0 5px var(--tc); transform: scale(0.92); }
+
+.emoji-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 4px; }
+.emoji-btn {
+  height: 40px;
+  border-radius: 12px;
+  font-size: 22px;
+  line-height: 1;
+  transition: background-color 0.12s ease;
+}
+.emoji-btn[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 20%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
+.emoji-none { font-size: 18px; color: var(--muted); }
+.emoji-custom { margin-top: 8px; }
+.dialog { max-height: calc(100% - 16px); overflow-y: auto; }
 .dialog-message { margin: -6px 0 16px; color: var(--muted); font-size: 15px; }
 
 .form-row { display: block; margin-bottom: 12px; }
@@ -638,6 +755,42 @@ textarea.field { resize: vertical; }
 .toast-action { color: #7fb3ff; font-weight: 600; flex: none; }
 
 .backup-picker { position: fixed; left: -9999px; opacity: 0; }
+
+/* ---- Delights ---- */
+
+@keyframes pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+@keyframes fade-done { from { opacity: 0.3; } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+.confetti {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 30%;
+  height: 0;
+  z-index: 300;
+  pointer-events: none;
+}
+.confetti span {
+  position: absolute;
+  width: 8px;
+  height: 12px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: confetti var(--d) cubic-bezier(0.15, 0.7, 0.35, 1) forwards;
+}
+.confetti span.round { width: 9px; height: 9px; border-radius: 50%; }
+@keyframes confetti {
+  0% { opacity: 1; transform: translate(0, 0) rotate(0); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) + 160px)) rotate(var(--r)); }
+}
+
+.haptic { position: fixed; left: -9999px; top: 0; opacity: 0; pointer-events: none; }
 
 /* ---- Screen transitions: iOS-style push and pop ---- */
 

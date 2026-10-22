@@ -1,4 +1,4 @@
-// Draws the app icon (white check on a blue gradient) and writes PNGs to icons/.
+// Draws the app icon (white check on a coral gradient) and writes PNGs to icons/.
 // Run with: node tools/make-icons.mjs
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -37,7 +37,7 @@ function segDist(px, py, ax, ay, bx, by) {
 function makeIcon(size) {
   const ss = 4; // supersampling for smooth edges
   const raw = Buffer.alloc(size * (size * 3 + 1));
-  const top = [10, 132, 255], bottom = [0, 88, 208];
+  const top = [255, 138, 112], bottom = [240, 82, 82];
   const stroke = 0.075;
   for (let y = 0; y < size; y++) {
     raw[y * (size * 3 + 1)] = 0;

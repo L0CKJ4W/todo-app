@@ -1,5 +1,5 @@
 import * as store from './store.js';
-import { h, icon, progressPie, formDialog, confirmDialog, actionSheet, openOverlay, toast } from './ui.js';
+import { h, icon, progressPie, formDialog, confirmDialog, actionSheet, openOverlay, toast, confetti, haptic } from './ui.js';
 import { onLongPress, enableEdgeSwipeBack } from './gestures.js';
 
 const topbar = document.getElementById('topbar');
@@ -70,8 +70,55 @@ function iconButton(name, label, onclick) {
   return h('button', { type: 'button', class: 'icon-btn', 'aria-label': label, title: label, onclick }, icon(name));
 }
 
-function emptyState(title, text) {
-  return h('div', { class: 'empty' }, h('p', { class: 'empty-title' }, title), h('p', { class: 'empty-text' }, text));
+function emptyState(emoji, title, text) {
+  return h('div', { class: 'empty' },
+    h('div', { class: 'empty-emoji', 'aria-hidden': 'true' }, emoji),
+    h('p', { class: 'empty-title' }, title),
+    h('p', { class: 'empty-text' }, text));
+}
+
+// The list's color tile with its emoji, or a progress pie when it has no emoji.
+function listTile(list, c, size = '') {
+  return h('span', { class: `tile c-${list.color}${size ? ` tile-${size}` : ''}` },
+    list.emoji ? h('span', { class: 'tile-emoji' }, list.emoji) : progressPie(c.complete, c.total));
+}
+
+// Each screen takes the color of what it shows; the home screen uses the app's own coral.
+function setScreenColor(color) {
+  const root = document.documentElement;
+  if (color) root.style.setProperty('--accent', `var(--c-${color})`);
+  else root.style.removeProperty('--accent');
+  root.classList.toggle('tinted', !!color);
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 5) return 'Up late? 🦉';
+  if (hour < 12) return 'Good morning ☀️';
+  if (hour < 17) return 'Good afternoon 🌤️';
+  if (hour < 22) return 'Good evening 🌙';
+  return 'Winding down? 🌙';
+}
+
+const COLOR_HEX = { coral: '#ff6b5e', orange: '#ff9f43', sun: '#f7c331', green: '#2fbf71', teal: '#14b8a6', blue: '#3d8bfd', violet: '#8b6cf6', pink: '#f25ca8', slate: '#7c8aa0' };
+let poppedItemId = null; // the item just completed, so its ring plays a little pop
+
+// All status changes go through here so finishing a list gets celebrated.
+function setStatus(listId, itemId, status, { tapped = false } = {}) {
+  const before = store.getList(listId);
+  if (!before) return;
+  const wasDone = before.items.length > 0 && before.items.every((i) => i.status === 'complete');
+  if (status === 'complete') {
+    poppedItemId = itemId;
+    if (tapped) haptic();
+  }
+  store.updateItem(listId, itemId, { status });
+  const list = store.getList(listId);
+  const nowDone = list.items.length > 0 && list.items.every((i) => i.status === 'complete');
+  if (nowDone && !wasDone) {
+    confetti([COLOR_HEX[list.color], '#ffd166', '#06d6a0', '#ef476f', '#118ab2']);
+    toast(`${list.emoji || '🎉'} “${list.name}” is all done!`);
+  }
 }
 
 function folderOptions() {
@@ -107,6 +154,7 @@ function mountHome() {
   const results = h('div');
 
   document.title = 'To Do';
+  setScreenColor(null);
   topbar.classList.remove('scrolled');
   topbar.replaceChildren(h('div', { class: 'topbar-row' },
     h('div', { class: 'topbar-side' }),
@@ -115,8 +163,11 @@ function mountHome() {
   ));
 
   const largeTitle = h('h1', { class: 'large-title' }, 'Lists');
+  const overview = h('p', { class: 'large-sub' });
   main.replaceChildren(
+    h('p', { class: 'eyebrow' }, greeting()),
     largeTitle,
+    overview,
     installHint(),
     h('div', { class: 'toolbar' },
       searchField('Search lists', (v) => { query = v; fill(); }),
@@ -134,7 +185,7 @@ function mountHome() {
     const matches = (l) => !q || l.name.toLocaleLowerCase().includes(q);
 
     if (!state.lists.length && !state.folders.length) {
-      results.replaceChildren(emptyState('No lists yet', 'Tap + to make your first list.'));
+      results.replaceChildren(emptyState('🌱', 'A fresh start', 'Tap + to plant your first list.'));
       return;
     }
 
@@ -155,7 +206,7 @@ function mountHome() {
           : h('p', { class: 'folder-empty' }, 'No lists in this folder yet')) : null));
     }
 
-    if (!out.length) out.push(emptyState('No matches', `Nothing named “${query.trim()}”.`));
+    if (!out.length) out.push(emptyState('🔍', 'No matches', `Nothing named “${query.trim()}”.`));
     else if (!q) {
       out.push(h('button', { type: 'button', class: 'text-btn new-folder', onclick: newFolder }, icon('folderPlus'), 'New folder'));
     }
@@ -165,9 +216,26 @@ function mountHome() {
   return {
     update() {
       sortLabel.textContent = store.LIST_SORTS.find((s) => s.id === store.getState().prefs.listSort).short;
+      overview.textContent = homeOverview();
       fill();
     },
   };
+}
+
+function homeOverview() {
+  const lists = store.getState().lists;
+  if (!lists.length) return 'Nothing on your plate yet.';
+  const t = { in_progress: 0, open: 0 };
+  for (const l of lists) {
+    for (const i of l.items) {
+      if (i.status === 'in_progress') t.in_progress++;
+      if (i.status !== 'complete') t.open++;
+    }
+  }
+  if (!t.open) return 'Everything’s done. Nice work! 🎉';
+  const parts = [`${t.open} to do`];
+  if (t.in_progress) parts.push(`${t.in_progress} in progress`);
+  return `${parts.join(' · ')} across ${plural(lists.length, 'list')}`;
 }
 
 function installHint() {
@@ -212,7 +280,7 @@ function listRow(list) {
   const c = store.counts(list);
   // A button rather than a link, so a long press opens our menu instead of Safari's link preview.
   const open = h('button', { type: 'button', class: 'row-main', onclick: () => openList(list.id) },
-    progressPie(c.complete, c.total),
+    listTile(list, c),
     h('span', { class: 'row-text' },
       h('span', { class: 'row-title' }, list.name),
       h('span', { class: 'row-sub' }, listSummary(c)),
@@ -308,14 +376,24 @@ async function deleteFolder(id) {
 
 // ---- List actions (used on both screens) ----
 
+function lookFields(list) {
+  return [
+    { name: 'emoji', label: 'Emoji', type: 'emoji', value: list ? list.emoji : '', options: store.EMOJI_CHOICES },
+    {
+      name: 'color', label: 'Color', type: 'colors', value: list ? list.color : store.nextColor(),
+      options: store.LIST_COLORS.map((c) => ({ value: c.id, label: c.label })),
+    },
+  ];
+}
+
 async function newList(folderId) {
-  const fields = [{ name: 'name', label: 'Name', placeholder: 'e.g. Groceries', required: true }];
+  const fields = [{ name: 'name', label: 'Name', placeholder: 'e.g. Groceries', required: true }, ...lookFields(null)];
   if (store.getState().folders.length) {
     fields.push({ name: 'folderId', label: 'Folder', type: 'select', options: folderOptions(), value: folderId || '' });
   }
   const v = await formDialog({ title: 'New list', fields, okLabel: 'Create' });
   if (!v) return;
-  const list = store.createList(v.name, v.folderId || folderId || null);
+  const list = store.createList(v.name, v.folderId || folderId || null, { color: v.color, emoji: v.emoji });
   addOnOpen = true;
   openList(list.id);
 }
@@ -327,7 +405,7 @@ async function listMenu(id) {
   const choice = await actionSheet({
     title: list.name,
     actions: [
-      { label: 'Rename list', value: 'rename' },
+      { label: 'Edit name, emoji & color', value: 'rename' },
       { label: 'Move to folder', value: 'move' },
       done ? { label: `Clear ${plural(done, 'completed item')}`, value: 'clear' } : null,
       { label: 'Delete list', value: 'delete', danger: true },
@@ -341,8 +419,11 @@ async function listMenu(id) {
 
 async function renameList(id) {
   const list = store.getList(id);
-  const v = await formDialog({ title: 'Rename list', fields: [{ name: 'name', label: 'Name', value: list.name, required: true }] });
-  if (v) store.updateList(id, { name: v.name });
+  const v = await formDialog({
+    title: 'Edit list',
+    fields: [{ name: 'name', label: 'Name', value: list.name, required: true }, ...lookFields(list)],
+  });
+  if (v) store.updateList(id, { name: v.name, emoji: v.emoji, color: v.color });
 }
 
 async function moveList(id) {
@@ -391,8 +472,13 @@ function mountList(id) {
   let query = '';
   const smallTitle = h('div', { class: 'topbar-title' });
   const titleText = h('span');
-  const pieSlot = h('span', { class: 'title-pie' });
+  const pieSlot = h('span', { class: 'title-tile' });
   const subtitle = h('p', { class: 'large-sub' });
+  const progressFill = h('span');
+  const progressBar = h('div', { class: 'list-progress', 'aria-hidden': 'true' }, progressFill);
+  const doneBanner = h('div', { class: 'done-banner', hidden: true },
+    h('span', { class: 'done-emoji', 'aria-hidden': 'true' }, '🎉'),
+    h('span', {}, h('strong', {}, 'All done!'), ' Every item here is complete.'));
   const sortLabel = h('span');
   const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Filter by status' });
   const itemsEl = h('div');
@@ -412,6 +498,8 @@ function mountList(id) {
   main.replaceChildren(
     largeTitle,
     subtitle,
+    progressBar,
+    doneBanner,
     h('div', { class: 'toolbar' },
       searchField('Search items', (v) => { query = v; fillItems(); }),
       h('button', { type: 'button', class: 'chip', onclick: () => pickItemSort(id), 'aria-label': 'Sort items' }, icon('sort'), sortLabel),
@@ -449,7 +537,7 @@ function mountList(id) {
     const list = store.getList(id);
     if (!list) return;
     if (!list.items.length) {
-      itemsEl.replaceChildren(emptyState('No items yet', 'Tap + to add one.'));
+      itemsEl.replaceChildren(emptyState(list.emoji || '✨', 'Nothing here yet', 'Tap + and add the first thing.'));
       return;
     }
     const q = query.trim().toLocaleLowerCase();
@@ -457,7 +545,7 @@ function mountList(id) {
     const visible = list.items.filter((i) => (!filter.length || filter.includes(i.status))
       && (!q || i.text.toLocaleLowerCase().includes(q) || i.notes.toLocaleLowerCase().includes(q)));
     if (!visible.length) {
-      itemsEl.replaceChildren(emptyState('Nothing matches', 'Try a different search or status filter.'));
+      itemsEl.replaceChildren(emptyState('🔍', 'Nothing matches', 'Try a different search or status filter.'));
       return;
     }
     const sorted = store.sortItems(visible, list.sort);
@@ -480,11 +568,15 @@ function mountList(id) {
       if (!list) { location.replace('#/'); return; }
       const c = store.counts(list);
       document.title = list.name;
+      setScreenColor(list.color);
       titleText.textContent = list.name;
       smallTitle.textContent = list.name;
-      pieSlot.replaceChildren(progressPie(c.complete, c.total));
+      pieSlot.replaceChildren(listTile(list, c, 'lg'));
       const folder = list.folderId ? store.getFolder(list.folderId) : null;
       subtitle.textContent = [folder?.name, listSummary(c)].filter(Boolean).join(' · ');
+      progressFill.style.width = `${c.total ? Math.round((c.complete / c.total) * 100) : 0}%`;
+      progressBar.hidden = !c.total;
+      doneBanner.hidden = !(c.total && c.complete === c.total);
       sortLabel.textContent = store.ITEM_SORTS.find((s) => s.id === list.sort).short;
       fillChips(list);
       fillItems();
@@ -495,10 +587,12 @@ function mountList(id) {
 function itemRow(listId, item) {
   const status = store.statusInfo(item.status);
   const done = item.status === 'complete';
-  const row = h('li', { class: `item s-${item.status}` },
+  const popped = poppedItemId === item.id;
+  if (popped) poppedItemId = null;
+  const row = h('li', { class: `item s-${item.status}${popped ? ' pop' : ''}` },
     h('button', {
       type: 'button', class: 'check', 'aria-label': done ? `Mark “${item.text}” not complete` : `Mark “${item.text}” complete`,
-      onclick: () => store.updateItem(listId, item.id, { status: done ? 'not_started' : 'complete' }),
+      onclick: () => setStatus(listId, item.id, done ? 'not_started' : 'complete', { tapped: true }),
     }, h('span', { class: 'ring' }, done ? icon('check') : null)),
     h('div', { class: 'item-body' },
       h('button', { type: 'button', class: 'item-main', onclick: () => editItem(listId, item.id) },
@@ -531,7 +625,7 @@ async function itemMenu(listId, itemId) {
   else if (choice === '__delete__') {
     const removed = store.removeItems(listId, (i) => i.id === itemId);
     toast('Item deleted', { actionLabel: 'Undo', onAction: () => store.restoreItems(listId, removed) });
-  } else if (choice !== item.status) store.updateItem(listId, itemId, { status: choice });
+  } else if (choice !== item.status) setStatus(listId, itemId, choice);
 }
 
 // Todoist-style quick add: a bottom sheet that stays open so you can add several items in a row.
@@ -561,7 +655,8 @@ function quickAdd(listId, getQuery) {
       const item = store.addItem(listId, text);
       if (item && status !== 'not_started') store.updateItem(listId, item.id, { status });
       added++;
-      counter.textContent = `${plural(added, 'item')} added`;
+      const cheers = ['Got it ✓', 'Keep going!', 'On a roll 🔥', 'Nice and tidy ✨', 'Look at you go 🚀'];
+      counter.textContent = `${plural(added, 'item')} added · ${cheers[Math.min(added - 1, cheers.length - 1)]}`;
       input.value = '';
       input.focus();
       const list = store.getList(listId);
@@ -589,7 +684,7 @@ async function pickStatus(listId, itemId) {
     title: item.text,
     actions: store.STATUSES.map((s) => ({ label: s.label, value: s.id, checked: s.id === item.status })),
   });
-  if (choice && choice !== item.status) store.updateItem(listId, itemId, { status: choice });
+  if (choice && choice !== item.status) setStatus(listId, itemId, choice);
 }
 
 async function pickItemSort(listId) {
@@ -620,8 +715,9 @@ async function editItem(listId, itemId) {
     return;
   }
   const patch = {};
-  for (const key of ['text', 'status', 'notes']) if (v[key] !== item[key]) patch[key] = v[key];
+  for (const key of ['text', 'notes']) if (v[key] !== item[key]) patch[key] = v[key];
   if (Object.keys(patch).length) store.updateItem(listId, itemId, patch);
+  if (v.status !== item.status) setStatus(listId, itemId, v.status);
 }
 
 // ================= Backup =================

@@ -6,6 +6,7 @@ export function h(tag, props = {}, ...children) {
   for (const [key, v] of Object.entries(props || {})) {
     if (v == null || v === false) continue;
     if (key === 'class') el.className = v;
+    else if (key === 'dataset') Object.assign(el.dataset, v);
     else if (key === 'value') value = v; // set after children so <select> has its options
     else if (key.startsWith('on') && typeof v === 'function') el.addEventListener(key.slice(2).toLowerCase(), v);
     else if (key in el && typeof v !== 'string') el[key] = v;
@@ -108,6 +109,13 @@ export function formDialog({ title, fields, okLabel = 'Save', extraActions = [] 
     const inputs = {};
     const rows = fields.map((f) => {
       let input;
+      if (f.type === 'colors' || f.type === 'emoji') {
+        // A hidden input holds the value; the swatches/emoji buttons set it.
+        input = h('input', { type: 'hidden', value: f.value ?? '' });
+        inputs[f.name] = input;
+        const picker = f.type === 'colors' ? colorPicker(f, input) : emojiPicker(f, input);
+        return h('div', { class: 'form-row' }, h('span', { class: 'form-label' }, f.label), input, picker);
+      }
       if (f.type === 'select') {
         input = h('select', { class: 'field', value: f.value ?? '' },
           f.options.map((o) => h('option', { value: o.value }, o.label)));
@@ -156,9 +164,85 @@ export function formDialog({ title, fields, okLabel = 'Save', extraActions = [] 
     );
     close = openOverlay(form, { kind: 'dialog', onDismiss: () => finish(null) });
 
-    const first = fields.find((f) => f.type !== 'select');
+    const first = fields.find((f) => !f.type || f.type === 'text' || f.type === 'textarea');
     if (first) inputs[first.name].focus();
   });
+}
+
+function colorPicker(field, hidden) {
+  const buttons = field.options.map((o) => h('button', {
+    type: 'button', role: 'radio', class: `swatch c-${o.value}`, 'aria-label': o.label, title: o.label,
+    'aria-checked': String(o.value === hidden.value), dataset: { value: o.value },
+    onclick: () => {
+      hidden.value = o.value;
+      for (const b of buttons) b.setAttribute('aria-checked', String(b.dataset.value === o.value));
+    },
+  }));
+  return h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': field.label }, buttons);
+}
+
+function emojiPicker(field, hidden) {
+  const custom = h('input', {
+    type: 'text', class: 'field emoji-custom', placeholder: 'Or type any emoji', 'aria-label': 'Custom emoji',
+    maxLength: 16, autocomplete: 'off',
+  });
+  const mark = () => {
+    for (const b of buttons) b.setAttribute('aria-checked', String(b.dataset.emoji === hidden.value));
+  };
+  const buttons = [
+    h('button', { type: 'button', role: 'radio', class: 'emoji-btn emoji-none', 'aria-label': 'No emoji', dataset: { emoji: '' } }, '∅'),
+    ...field.options.map((e) => h('button', { type: 'button', role: 'radio', class: 'emoji-btn', 'aria-label': e, dataset: { emoji: e } }, e)),
+  ];
+  for (const b of buttons) {
+    b.addEventListener('click', () => {
+      hidden.value = b.dataset.emoji;
+      custom.value = '';
+      mark();
+    });
+  }
+  custom.addEventListener('input', () => {
+    hidden.value = custom.value.trim();
+    mark();
+  });
+  if (hidden.value && !field.options.includes(hidden.value)) custom.value = hidden.value;
+  mark();
+  return h('div', { class: 'emoji-picker' }, h('div', { class: 'emoji-grid', role: 'radiogroup', 'aria-label': field.label }, buttons), custom);
+}
+
+// ---- Little delights ----
+
+// iOS 18+ plays a haptic tap when a switch-style checkbox is toggled by a tap.
+// Clicking a hidden one borrows that, since web pages have no vibration API on iPhone.
+export function haptic() {
+  try {
+    const label = h('label', { class: 'haptic', 'aria-hidden': 'true' }, h('input', { type: 'checkbox', switch: '' }));
+    document.body.append(label);
+    label.click();
+    label.remove();
+  } catch { /* not supported */ }
+}
+
+export function confetti(colors) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const layer = h('div', { class: 'confetti', 'aria-hidden': 'true' });
+  for (let i = 0; i < 48; i++) {
+    const angle = (Math.random() * 140 + 200) * (Math.PI / 180); // mostly upward
+    const dist = 180 + Math.random() * 260;
+    const piece = h('span', {
+      style: [
+        `--dx:${Math.cos(angle) * dist}px`,
+        `--dy:${Math.sin(angle) * dist}px`,
+        `--r:${Math.random() * 720 - 360}deg`,
+        `--d:${0.9 + Math.random() * 0.7}s`,
+        `background:${colors[i % colors.length]}`,
+        `left:${50 + (Math.random() * 20 - 10)}%`,
+      ].join(';'),
+    });
+    if (i % 3 === 0) piece.classList.add('round');
+    layer.append(piece);
+  }
+  document.body.append(layer);
+  setTimeout(() => layer.remove(), 1800);
 }
 
 export function confirmDialog({ title, message, okLabel = 'OK', danger = false }) {
