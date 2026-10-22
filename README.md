@@ -24,15 +24,15 @@ Then open http://localhost:8080/.
 
 ## Put it on your iPhone
 
-The app needs to be served over HTTPS once so Safari can install it. Any static host works, for example GitHub Pages, Netlify, or Cloudflare Pages. Upload the whole folder; there is no build step.
+The app is hosted on GitHub Pages at **https://l0ckj4w.github.io/todo-app/**, published from the `main` branch of this repo. There is no build step.
 
-1. Open the hosted URL in **Safari** on the iPhone.
+1. Open that URL in **Safari** on the iPhone.
 2. Tap **Share**, then **Add to Home Screen**.
 3. Open it from the Home Screen icon. It now runs full screen and works offline.
 
 ## Updating
 
-After you change any file, bump `VERSION` in `sw.js` (for example `v1` → `v2`) and upload again. The app on the phone picks up the new version the next time it opens with a connection, and shows it on the launch after that.
+After you change any file, bump `VERSION` in `sw.js` (for example `v2` → `v3`), commit, and `git push`. GitHub Pages republishes within a minute or two. The app on the phone picks up the new version the next time it opens with a connection, and shows it on the launch after that.
 
 ## Files
 
