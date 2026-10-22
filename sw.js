@@ -1,6 +1,6 @@
 // Caches the app's files so it opens with no connection.
 // Bump VERSION whenever you change any file, so phones pick up the new version.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `todo-app-${VERSION}`;
 const FILES = [
   './',
@@ -9,6 +9,7 @@ const FILES = [
   'app.js',
   'store.js',
   'ui.js',
+  'gestures.js',
   'manifest.webmanifest',
   'icons/icon-180.png',
   'icons/icon-192.png',

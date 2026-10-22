@@ -1,17 +1,23 @@
 import * as store from './store.js';
 import { h, icon, progressPie, formDialog, confirmDialog, actionSheet, openOverlay, toast } from './ui.js';
+import { onLongPress, enableEdgeSwipeBack } from './gestures.js';
 
 const topbar = document.getElementById('topbar');
 const main = document.getElementById('app');
+const overlayRoot = document.getElementById('overlay-root');
 const HINT_KEY = 'todo-app/install-hint-dismissed';
 
 let current = null; // the mounted screen: { key, update }
 let addOnOpen = false; // a just-created list opens the quick-add sheet
+let homeScrollY = 0; // going back to the lists restores where you were, as iOS does
+let afterSwipe = null; // set when an edge swipe already animated the way back
 
 function route() {
   const m = location.hash.match(/^#\/list\/([^/]+)$/);
   return m ? { view: 'list', id: decodeURIComponent(m[1]) } : { view: 'home' };
 }
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
 function render() {
   const r = route();
@@ -20,12 +26,37 @@ function render() {
     return;
   }
   const key = r.view === 'list' ? `list:${r.id}` : 'home';
-  if (current?.key !== key) {
+  const swiped = afterSwipe;
+  afterSwipe = null;
+  if (current?.key === key) {
+    current.update();
+    swiped?.();
+    return;
+  }
+
+  if (current?.key === 'home') homeScrollY = window.scrollY;
+  const swap = () => {
     current = r.view === 'list' ? mountList(r.id) : mountHome();
     current.key = key;
-    window.scrollTo(0, 0);
+    current.update();
+    window.scrollTo(0, r.view === 'home' ? homeScrollY : 0);
+  };
+
+  if (current && !swiped && document.startViewTransition && !reduceMotion.matches && document.visibilityState === 'visible') {
+    document.documentElement.dataset.nav = r.view === 'list' ? 'push' : 'pop';
+    document.startViewTransition(swap);
+  } else {
+    swap();
+    swiped?.();
   }
-  current.update();
+}
+
+function goHome() {
+  location.hash = '#/';
+}
+
+function openList(id) {
+  location.hash = listHref(id);
 }
 
 const listHref = (id) => `#/list/${encodeURIComponent(id)}`;
@@ -179,17 +210,18 @@ function listSummary(c) {
 
 function listRow(list) {
   const c = store.counts(list);
-  return h('li', { class: 'row' },
-    h('a', { class: 'row-main', href: listHref(list.id) },
-      progressPie(c.complete, c.total),
-      h('span', { class: 'row-text' },
-        h('span', { class: 'row-title' }, list.name),
-        h('span', { class: 'row-sub' }, listSummary(c)),
-      ),
-      h('span', { class: 'row-count' }, c.total - c.complete || ''),
+  // A button rather than a link, so a long press opens our menu instead of Safari's link preview.
+  const open = h('button', { type: 'button', class: 'row-main', onclick: () => openList(list.id) },
+    progressPie(c.complete, c.total),
+    h('span', { class: 'row-text' },
+      h('span', { class: 'row-title' }, list.name),
+      h('span', { class: 'row-sub' }, listSummary(c)),
     ),
-    iconButton('more', `Options for ${list.name}`, () => listMenu(list.id)),
+    h('span', { class: 'row-count' }, c.total - c.complete || ''),
   );
+  const row = h('li', { class: 'row' }, open, iconButton('more', `Options for ${list.name}`, () => listMenu(list.id)));
+  onLongPress(open, () => listMenu(list.id));
+  return row;
 }
 
 async function homeMenu() {
@@ -285,7 +317,7 @@ async function newList(folderId) {
   if (!v) return;
   const list = store.createList(v.name, v.folderId || folderId || null);
   addOnOpen = true;
-  location.hash = listHref(list.id);
+  openList(list.id);
 }
 
 async function listMenu(id) {
@@ -368,7 +400,7 @@ function mountList(id) {
   topbar.classList.remove('scrolled');
   topbar.replaceChildren(h('div', { class: 'topbar-row' },
     h('div', { class: 'topbar-side' },
-      h('button', { type: 'button', class: 'glass-btn back-btn', onclick: () => { location.hash = '#/'; } }, icon('back'), h('span', {}, 'Lists'))),
+      h('button', { type: 'button', class: 'glass-btn back-btn', onclick: goHome }, icon('back'), h('span', {}, 'Lists'))),
     smallTitle,
     h('div', { class: 'topbar-side end' }, glassButton('more', 'List options', () => listMenu(id))),
   ));
@@ -463,7 +495,7 @@ function mountList(id) {
 function itemRow(listId, item) {
   const status = store.statusInfo(item.status);
   const done = item.status === 'complete';
-  return h('li', { class: `item s-${item.status}` },
+  const row = h('li', { class: `item s-${item.status}` },
     h('button', {
       type: 'button', class: 'check', 'aria-label': done ? `Mark “${item.text}” not complete` : `Mark “${item.text}” complete`,
       onclick: () => store.updateItem(listId, item.id, { status: done ? 'not_started' : 'complete' }),
@@ -478,6 +510,28 @@ function itemRow(listId, item) {
       }, h('span', { class: 'dot' }), status.label),
     ),
   );
+  onLongPress(row, () => itemMenu(listId, item.id));
+  return row;
+}
+
+// Long-press menu for an item: change status, edit, or delete.
+async function itemMenu(listId, itemId) {
+  const item = store.getItem(listId, itemId);
+  if (!item) return;
+  const choice = await actionSheet({
+    title: item.text,
+    actions: [
+      ...store.STATUSES.map((s) => ({ label: s.label, value: s.id, checked: s.id === item.status })),
+      { label: 'Edit…', value: '__edit__' },
+      { label: 'Delete', value: '__delete__', danger: true },
+    ],
+  });
+  if (!choice) return;
+  if (choice === '__edit__') editItem(listId, itemId);
+  else if (choice === '__delete__') {
+    const removed = store.removeItems(listId, (i) => i.id === itemId);
+    toast('Item deleted', { actionLabel: 'Undo', onAction: () => store.restoreItems(listId, removed) });
+  } else if (choice !== item.status) store.updateItem(listId, itemId, { status: choice });
 }
 
 // Todoist-style quick add: a bottom sheet that stays open so you can add several items in a row.
@@ -627,6 +681,18 @@ store.setSaveErrorHandler(() => toast("Couldn't save. Your device storage may be
 store.subscribe(() => current?.update());
 window.addEventListener('hashchange', render);
 render();
+
+enableEdgeSwipeBack({
+  layers: () => [topbar, main],
+  canStart: () => route().view === 'list' && !overlayRoot.childElementCount,
+  onBack: (resetLayers) => {
+    afterSwipe = resetLayers;
+    goHome();
+  },
+});
+
+// iOS only shows :active press styles when the page listens for touches.
+document.addEventListener('touchstart', () => {}, { passive: true });
 
 // Ask iOS not to clear this app's storage when space runs low.
 navigator.storage?.persist?.().catch(() => {});
