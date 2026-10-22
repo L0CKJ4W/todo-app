@@ -31,6 +31,7 @@ const ICONS = {
   sort: '<path d="M7 4v16M3.5 7.5L7 4l3.5 3.5M17 20V4M13.5 16.5L17 20l3.5-3.5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
+  grip: '<path d="M5 9h14M5 15h14"/>',
   filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
 };
 

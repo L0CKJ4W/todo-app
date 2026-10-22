@@ -472,6 +472,30 @@ main {
   text-align: left;
 }
 .item { transition: background-color 0.2s ease; }
+
+/* Drag to reorder */
+.drag-handle {
+  align-self: stretch;
+  width: 44px;
+  margin-right: -12px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: grab;
+  touch-action: none; /* the finger drags the row instead of scrolling the page */
+}
+.drag-handle .icon svg { width: 20px; height: 20px; }
+.sorting .item { transition: transform 0.2s cubic-bezier(0.2, 0.85, 0.25, 1); }
+.sorting .item::before { opacity: 0; }
+.item.dragging {
+  z-index: 5;
+  transition: none;
+  background: var(--raised);
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16), 0 0 0 0.5px var(--sep);
+}
+.item.dragging .drag-handle { cursor: grabbing; opacity: 1; color: var(--accent); }
 .item.pressed { background: var(--fill); transition: none; }
 .item-text { overflow-wrap: anywhere; }
 .item-notes {

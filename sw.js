@@ -1,6 +1,6 @@
 // Caches the app's files so it opens with no connection.
 // Bump VERSION whenever you change any file, so phones pick up the new version.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `todo-app-${VERSION}`;
 const FILES = [
   './',

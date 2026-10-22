@@ -15,6 +15,7 @@ const STATUS_RANK = { in_progress: 0, not_started: 1, on_hold: 2, complete: 3 };
 export const STATUS_GROUP_ORDER = ['in_progress', 'not_started', 'on_hold', 'complete'];
 
 export const ITEM_SORTS = [
+  { id: 'manual', label: 'My order (drag to arrange)', short: 'My order' },
   { id: 'added', label: 'Date added (oldest first)', short: 'Oldest' },
   { id: 'newest', label: 'Date added (newest first)', short: 'Newest' },
   { id: 'updated', label: 'Recently changed', short: 'Changed' },
@@ -186,6 +187,7 @@ export function sortItems(items, sort) {
     case 'updated': return out.sort((a, b) => b.updatedAt - a.updatedAt);
     case 'name': return out.sort((a, b) => collator.compare(a.text, b.text));
     case 'status': return out.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.createdAt - b.createdAt);
+    case 'manual': return out; // the order items are stored in is your custom order
     default: return out.sort((a, b) => a.createdAt - b.createdAt);
   }
 }
@@ -224,7 +226,7 @@ export function createList(name, folderId = null, { color, emoji } = {}) {
   const list = {
     id: uid(), name, folderId: getFolder(folderId) ? folderId : null,
     color: COLOR_IDS.has(color) ? color : nextColor(), emoji: cleanEmoji(emoji),
-    createdAt: Date.now(), sort: 'added', statusFilter: [], items: [],
+    createdAt: Date.now(), sort: 'manual', statusFilter: [], items: [],
   };
   state.lists.push(list);
   commit();
@@ -261,6 +263,22 @@ export function updateItem(listId, itemId, patch) {
   const item = getItem(listId, itemId);
   if (!item) return;
   Object.assign(item, patch, { updatedAt: Date.now() });
+  commit();
+}
+
+// Moves items within a list. `visibleIds` is the new order of the items currently on screen
+// (search and filters may hide some). Hidden items keep their places; the visible ones are
+// rearranged among the positions they already held. Switches the list to "My order", starting
+// from whatever order was on screen so nothing else jumps around.
+export function reorderItems(listId, visibleIds) {
+  const list = getList(listId);
+  if (!list) return;
+  const base = list.sort === 'manual' ? list.items : sortItems(list.items, list.sort);
+  const byId = new Map(base.map((i) => [i.id, i]));
+  const visible = new Set(visibleIds);
+  const queue = visibleIds.filter((id) => byId.has(id)).map((id) => byId.get(id));
+  list.items = base.map((item) => (visible.has(item.id) ? queue.shift() : item));
+  list.sort = 'manual';
   commit();
 }
 

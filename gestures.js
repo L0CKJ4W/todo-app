@@ -13,7 +13,7 @@ export function onLongPress(el, fn, { delay = 450 } = {}) {
   };
 
   el.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1) return;
+    if (e.touches.length !== 1 || e.target.closest?.('.drag-handle')) return;
     fired = false;
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
@@ -39,6 +39,92 @@ export function onLongPress(el, fn, { delay = 450 } = {}) {
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (!fired) fn();
+  });
+}
+
+// Drag rows by their .drag-handle to reorder them. Rows are the list's direct children and carry
+// data-id. The dragged row follows the finger, the others slide out of its way, and the page
+// scrolls when you drag near the top or bottom. onMove(ids) gets the new order of all rows.
+export function makeSortable(listEl, { onStart, onMove }) {
+  listEl.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest('.drag-handle');
+    if (!handle || e.button !== 0) return;
+    const row = handle.closest('[data-id]');
+    if (!row || row.parentElement !== listEl) return;
+    e.preventDefault();
+
+    const rows = [...listEl.children];
+    const from = rows.indexOf(row);
+    const rects = rows.map((r) => r.getBoundingClientRect());
+    const height = rects[from].height;
+    const startY = e.clientY;
+    const startScroll = window.scrollY;
+    let pointerY = e.clientY;
+    let to = from;
+    let frame = 0;
+
+    try { handle.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+    row.classList.add('dragging');
+    listEl.classList.add('sorting');
+    onStart?.();
+
+    const layout = () => {
+      const dy = pointerY - startY + (window.scrollY - startScroll);
+      row.style.transform = `translateY(${dy}px) scale(1.02)`;
+      // Positions are compared in the coordinates captured at the start of the drag.
+      const center = rects[from].top + height / 2 + dy;
+      to = from;
+      for (let i = 0; i < from; i++) {
+        if (center < rects[i].top + rects[i].height / 2) { to = i; break; }
+      }
+      for (let i = rows.length - 1; i > from; i--) {
+        if (center > rects[i].top + rects[i].height / 2) { to = i; break; }
+      }
+      rows.forEach((r, i) => {
+        if (i === from) return;
+        let shift = 0;
+        if (from < to && i > from && i <= to) shift = -height;
+        if (from > to && i >= to && i < from) shift = height;
+        r.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    };
+
+    // Scroll the page while the finger rests near the top or bottom edge.
+    const autoScroll = () => {
+      const edge = 90;
+      let speed = 0;
+      if (pointerY < edge) speed = -Math.ceil((edge - pointerY) / 8);
+      else if (pointerY > window.innerHeight - edge) speed = Math.ceil((pointerY - (window.innerHeight - edge)) / 8);
+      if (speed) {
+        window.scrollBy(0, speed);
+        layout();
+      }
+      frame = requestAnimationFrame(autoScroll);
+    };
+    frame = requestAnimationFrame(autoScroll);
+
+    const move = (ev) => {
+      pointerY = ev.clientY;
+      layout();
+    };
+    const end = () => {
+      cancelAnimationFrame(frame);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      listEl.classList.remove('sorting');
+      row.classList.remove('dragging');
+      if (to !== from) {
+        const ids = rows.map((r) => r.dataset.id);
+        ids.splice(to, 0, ids.splice(from, 1)[0]);
+        onMove(ids); // re-renders the list, so the moved rows are replaced
+      } else {
+        for (const r of rows) r.style.transform = '';
+      }
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
   });
 }
 

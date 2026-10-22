@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { h, icon, progressPie, formDialog, confirmDialog, actionSheet, openOverlay, toast, confetti, haptic } from './ui.js';
-import { onLongPress, enableEdgeSwipeBack } from './gestures.js';
+import { onLongPress, enableEdgeSwipeBack, makeSortable } from './gestures.js';
 
 const topbar = document.getElementById('topbar');
 const main = document.getElementById('app');
@@ -558,7 +558,20 @@ function mountList(id) {
           h('ul', { class: 'rows items' }, group.map((i) => itemRow(id, i))));
       }).filter(Boolean));
     } else {
-      itemsEl.replaceChildren(h('ul', { class: 'rows items' }, sorted.map((i) => itemRow(id, i))));
+      // Any order except the status groups can be rearranged by dragging; doing so switches the list to "My order".
+      const canSort = sorted.length > 1;
+      const ul = h('ul', { class: 'rows items' }, sorted.map((i) => itemRow(id, i, { sortable: canSort })));
+      if (canSort) {
+        makeSortable(ul, {
+          onStart: haptic,
+          onMove: (ids) => {
+            const wasManual = store.getList(id).sort === 'manual';
+            store.reorderItems(id, ids);
+            if (!wasManual) toast('Switched to your own order');
+          },
+        });
+      }
+      itemsEl.replaceChildren(ul);
     }
   }
 
@@ -584,12 +597,12 @@ function mountList(id) {
   };
 }
 
-function itemRow(listId, item) {
+function itemRow(listId, item, { sortable = false } = {}) {
   const status = store.statusInfo(item.status);
   const done = item.status === 'complete';
   const popped = poppedItemId === item.id;
   if (popped) poppedItemId = null;
-  const row = h('li', { class: `item s-${item.status}${popped ? ' pop' : ''}` },
+  const row = h('li', { class: `item s-${item.status}${popped ? ' pop' : ''}`, dataset: { id: item.id } },
     h('button', {
       type: 'button', class: 'check', 'aria-label': done ? `Mark “${item.text}” not complete` : `Mark “${item.text}” complete`,
       onclick: () => setStatus(listId, item.id, done ? 'not_started' : 'complete', { tapped: true }),
@@ -603,9 +616,18 @@ function itemRow(listId, item) {
         onclick: () => pickStatus(listId, item.id),
       }, h('span', { class: 'dot' }), status.label),
     ),
+    sortable ? h('span', { class: 'drag-handle', title: 'Drag to reorder', 'aria-hidden': 'true' }, icon('grip')) : null,
   );
   onLongPress(row, () => itemMenu(listId, item.id));
   return row;
+}
+
+// Move one item to the start or end of the list, in "My order".
+function moveItemToEdge(listId, itemId, edge) {
+  const list = store.getList(listId);
+  const ids = store.sortItems(list.items, list.sort).map((i) => i.id).filter((i) => i !== itemId);
+  if (edge === 'top') ids.unshift(itemId); else ids.push(itemId);
+  store.reorderItems(listId, ids);
 }
 
 // Long-press menu for an item: change status, edit, or delete.
@@ -616,12 +638,15 @@ async function itemMenu(listId, itemId) {
     title: item.text,
     actions: [
       ...store.STATUSES.map((s) => ({ label: s.label, value: s.id, checked: s.id === item.status })),
+      { label: 'Move to top', value: '__top__' },
+      { label: 'Move to bottom', value: '__bottom__' },
       { label: 'Edit…', value: '__edit__' },
       { label: 'Delete', value: '__delete__', danger: true },
     ],
   });
   if (!choice) return;
-  if (choice === '__edit__') editItem(listId, itemId);
+  if (choice === '__top__' || choice === '__bottom__') moveItemToEdge(listId, itemId, choice === '__top__' ? 'top' : 'bottom');
+  else if (choice === '__edit__') editItem(listId, itemId);
   else if (choice === '__delete__') {
     const removed = store.removeItems(listId, (i) => i.id === itemId);
     toast('Item deleted', { actionLabel: 'Undo', onAction: () => store.restoreItems(listId, removed) });
