@@ -29,8 +29,28 @@ const ICONS = {
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/>',
   sort: '<path d="M7 4v16M3.5 7.5L7 4l3.5 3.5M17 20V4M13.5 16.5L17 20l3.5-3.5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
-  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
+  filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
 };
+
+// Things-style progress pie: a ring with a filled wedge for the share of items done.
+export function progressPie(done, total) {
+  const span = document.createElement('span');
+  span.className = 'pie';
+  span.setAttribute('aria-hidden', 'true');
+  const frac = total ? done / total : 0;
+  if (total && done === total) {
+    span.classList.add('pie-full');
+    span.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    return span;
+  }
+  // The wedge is a thick stroke on a small circle; dasharray sets how much of it shows.
+  const r = 4.5;
+  const c = 2 * Math.PI * r;
+  span.innerHTML = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10.25" fill="none" stroke="currentColor" stroke-width="1.75"/>`
+    + `<circle cx="12" cy="12" r="${r}" fill="none" stroke="currentColor" stroke-width="${r * 2}" stroke-dasharray="${(frac * c).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 12 12)"/></svg>`;
+  return span;
+}
 
 export function icon(name) {
   const span = document.createElement('span');
@@ -44,17 +64,35 @@ export function icon(name) {
 
 const stack = [];
 
-function openOverlay(panel, { kind, onDismiss }) {
+export function openOverlay(panel, { kind, onDismiss }) {
   const backdrop = h('div', { class: `overlay overlay-${kind}` }, panel);
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) onDismiss(); });
   document.getElementById('overlay-root').append(backdrop);
   const entry = { onDismiss };
   stack.push(entry);
+
+  // iOS Safari doesn't shrink the page for the keyboard, so fit the overlay to the visible area
+  // to keep bottom sheets above the keyboard.
+  const vv = window.visualViewport;
+  const fit = () => {
+    backdrop.style.top = `${vv.offsetTop}px`;
+    backdrop.style.height = `${vv.height}px`;
+  };
+  if (vv) {
+    fit();
+    vv.addEventListener('resize', fit);
+    vv.addEventListener('scroll', fit);
+  }
+
   backdrop.getBoundingClientRect(); // so the fade-in transition runs
   backdrop.classList.add('open');
   return () => {
     const i = stack.indexOf(entry);
     if (i >= 0) stack.splice(i, 1);
+    if (vv) {
+      vv.removeEventListener('resize', fit);
+      vv.removeEventListener('scroll', fit);
+    }
     backdrop.remove();
   };
 }

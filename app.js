@@ -1,12 +1,12 @@
 import * as store from './store.js';
-import { h, icon, formDialog, confirmDialog, actionSheet, toast } from './ui.js';
+import { h, icon, progressPie, formDialog, confirmDialog, actionSheet, openOverlay, toast } from './ui.js';
 
 const topbar = document.getElementById('topbar');
 const main = document.getElementById('app');
 const HINT_KEY = 'todo-app/install-hint-dismissed';
 
 let current = null; // the mounted screen: { key, update }
-let focusAddOnOpen = false; // a just-created list opens ready for typing
+let addOnOpen = false; // a just-created list opens the quick-add sheet
 
 function route() {
   const m = location.hash.match(/^#\/list\/([^/]+)$/);
@@ -31,6 +31,10 @@ function render() {
 const listHref = (id) => `#/list/${encodeURIComponent(id)}`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+function glassButton(name, label, onclick) {
+  return h('button', { type: 'button', class: 'glass-btn', 'aria-label': label, title: label, onclick }, icon(name));
+}
+
 function iconButton(name, label, onclick) {
   return h('button', { type: 'button', class: 'icon-btn', 'aria-label': label, title: label, onclick }, icon(name));
 }
@@ -47,6 +51,23 @@ function isStandalone() {
   return navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 }
 
+// Shows the small centered title in the top bar once the large title scrolls out of view, as iOS does.
+let titleObserver = null;
+function collapseTitleOnScroll(largeTitle) {
+  titleObserver?.disconnect(); // the previous screen's title is gone
+  if (!('IntersectionObserver' in window)) return;
+  titleObserver = new IntersectionObserver(([entry]) => {
+    topbar.classList.toggle('scrolled', !entry.isIntersecting);
+  }, { rootMargin: '-56px 0px 0px 0px' });
+  titleObserver.observe(largeTitle);
+}
+
+function searchField(placeholder, oninput) {
+  return h('label', { class: 'search' },
+    icon('search'),
+    h('input', { type: 'search', placeholder, 'aria-label': placeholder, oninput: (e) => oninput(e.target.value) }));
+}
+
 // ================= Home: folders and lists =================
 
 function mountHome() {
@@ -55,27 +76,25 @@ function mountHome() {
   const results = h('div');
 
   document.title = 'To Do';
+  topbar.classList.remove('scrolled');
   topbar.replaceChildren(h('div', { class: 'topbar-row' },
     h('div', { class: 'topbar-side' }),
-    h('h1', { class: 'topbar-title' }, 'Lists'),
-    h('div', { class: 'topbar-side end' }, iconButton('more', 'More options', homeMenu)),
+    h('div', { class: 'topbar-title' }, 'Lists'),
+    h('div', { class: 'topbar-side end' }, glassButton('more', 'More options', homeMenu)),
   ));
 
+  const largeTitle = h('h1', { class: 'large-title' }, 'Lists');
   main.replaceChildren(
+    largeTitle,
     installHint(),
     h('div', { class: 'toolbar' },
-      h('input', {
-        type: 'search', class: 'search', placeholder: 'Search lists', 'aria-label': 'Search lists',
-        oninput: (e) => { query = e.target.value; fill(); },
-      }),
+      searchField('Search lists', (v) => { query = v; fill(); }),
       h('button', { type: 'button', class: 'chip', onclick: pickListSort, 'aria-label': 'Sort lists' }, icon('sort'), sortLabel),
     ),
     results,
-    h('div', { class: 'bottom-bar' }, h('div', { class: 'bottom-bar-inner' },
-      h('button', { type: 'button', class: 'bar-btn', onclick: () => newList(null) }, icon('plus'), 'New list'),
-      h('button', { type: 'button', class: 'bar-btn', onclick: newFolder }, icon('folderPlus'), 'New folder'),
-    )),
+    h('button', { type: 'button', class: 'fab', 'aria-label': 'New list', title: 'New list', onclick: () => newList(null) }, icon('plus')),
   );
+  collapseTitleOnScroll(largeTitle);
 
   function fill() {
     const state = store.getState();
@@ -84,32 +103,31 @@ function mountHome() {
     const matches = (l) => !q || l.name.toLocaleLowerCase().includes(q);
 
     if (!state.lists.length && !state.folders.length) {
-      results.replaceChildren(emptyState('No lists yet', 'Tap New list to make your first one.'));
+      results.replaceChildren(emptyState('No lists yet', 'Tap + to make your first list.'));
       return;
     }
 
     const out = [];
     const unfiled = store.sortLists(state.lists.filter((l) => !l.folderId && matches(l)), sort);
-    if (unfiled.length) {
-      out.push(h('section', { class: 'section' },
-        state.folders.length ? h('h2', { class: 'group-title' }, 'Not in a folder') : null,
-        h('div', { class: 'group' }, unfiled.map(listRow))));
-    }
+    if (unfiled.length) out.push(h('ul', { class: 'rows' }, unfiled.map(listRow)));
 
-    const folders = [];
     for (const f of store.sortedFolders()) {
       const inFolder = state.lists.filter((l) => l.folderId === f.id);
       const folderMatches = q && f.name.toLocaleLowerCase().includes(q);
       const shown = store.sortLists(folderMatches ? inFolder : inFolder.filter(matches), sort);
       if (q && !folderMatches && !shown.length) continue;
       const open = q ? true : !f.collapsed;
-      folders.push(h('div', { class: 'group folder' },
+      out.push(h('section', { class: 'folder' },
         folderHeader(f, inFolder.length, open),
-        open ? (shown.length ? shown.map(listRow) : h('div', { class: 'row empty-row' }, 'No lists in this folder yet')) : null));
+        open ? (shown.length
+          ? h('ul', { class: 'rows' }, shown.map(listRow))
+          : h('p', { class: 'folder-empty' }, 'No lists in this folder yet')) : null));
     }
-    if (folders.length) out.push(h('section', { class: 'section' }, h('h2', { class: 'group-title' }, 'Folders'), folders));
 
     if (!out.length) out.push(emptyState('No matches', `Nothing named “${query.trim()}”.`));
+    else if (!q) {
+      out.push(h('button', { type: 'button', class: 'text-btn new-folder', onclick: newFolder }, icon('folderPlus'), 'New folder'));
+    }
     results.replaceChildren(...out);
   }
 
@@ -126,8 +144,8 @@ function installHint() {
   try { dismissed = localStorage.getItem(HINT_KEY) === '1'; } catch { /* private mode */ }
   if (dismissed || isStandalone()) return null;
   const el = h('div', { class: 'hint' },
-    h('p', {}, h('strong', {}, 'Install it first: '),
-      'tap the Share button in Safari, then “Add to Home Screen”. The Home Screen app keeps its own copy of your lists, separate from this Safari tab.'),
+    h('p', {}, h('strong', {}, 'Install it first. '),
+      'In Safari tap Share, then “Add to Home Screen”. The Home Screen app keeps its own copy of your lists, separate from this tab.'),
     h('button', {
       type: 'button', class: 'hint-close', 'aria-label': 'Dismiss',
       onclick: () => { try { localStorage.setItem(HINT_KEY, '1'); } catch { /* ignore */ } el.remove(); },
@@ -137,15 +155,15 @@ function installHint() {
 }
 
 function folderHeader(folder, count, open) {
-  return h('div', { class: 'row folder-header' },
+  return h('div', { class: 'folder-header' },
     h('button', {
-      type: 'button', class: 'row-main', 'aria-expanded': String(open),
+      type: 'button', class: 'folder-toggle', 'aria-expanded': String(open),
       onclick: () => store.updateFolder(folder.id, { collapsed: !folder.collapsed }),
     },
+      icon('folder'),
+      h('span', { class: 'folder-name' }, folder.name),
+      h('span', { class: 'folder-count' }, count),
       h('span', { class: `chev${open ? ' open' : ''}` }, icon('chevron')),
-      h('span', { class: 'row-icon folder-icon' }, icon('folder')),
-      h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, folder.name)),
-      h('span', { class: 'count' }, count),
     ),
     iconButton('more', `Options for folder ${folder.name}`, () => folderMenu(folder.id)),
   );
@@ -153,7 +171,7 @@ function folderHeader(folder, count, open) {
 
 function listSummary(c) {
   if (!c.total) return 'No items';
-  const parts = [`${c.complete} of ${c.total} done`];
+  const parts = [`${c.complete}/${c.total} done`];
   if (c.in_progress) parts.push(`${c.in_progress} in progress`);
   if (c.on_hold) parts.push(`${c.on_hold} on hold`);
   return parts.join(' · ');
@@ -161,15 +179,14 @@ function listSummary(c) {
 
 function listRow(list) {
   const c = store.counts(list);
-  const pct = c.total ? Math.round((c.complete / c.total) * 100) : 0;
-  return h('div', { class: 'row list-row' },
+  return h('li', { class: 'row' },
     h('a', { class: 'row-main', href: listHref(list.id) },
-      h('span', { class: 'row-icon' }, icon('list')),
+      progressPie(c.complete, c.total),
       h('span', { class: 'row-text' },
         h('span', { class: 'row-title' }, list.name),
         h('span', { class: 'row-sub' }, listSummary(c)),
-        c.total ? h('span', { class: 'progress', 'aria-hidden': 'true' }, h('span', { style: `width:${pct}%` })) : null,
       ),
+      h('span', { class: 'row-count' }, c.total - c.complete || ''),
     ),
     iconButton('more', `Options for ${list.name}`, () => listMenu(list.id)),
   );
@@ -179,12 +196,14 @@ async function homeMenu() {
   const choice = await actionSheet({
     title: 'Your lists are saved only on this device',
     actions: [
+      { label: 'New list', value: 'list' },
       { label: 'New folder', value: 'folder' },
       { label: 'Back up (export)', value: 'export' },
       { label: 'Restore from backup', value: 'import' },
     ],
   });
-  if (choice === 'folder') newFolder();
+  if (choice === 'list') newList(null);
+  else if (choice === 'folder') newFolder();
   else if (choice === 'export') exportBackup();
   else if (choice === 'import') importBackup();
 }
@@ -265,7 +284,7 @@ async function newList(folderId) {
   const v = await formDialog({ title: 'New list', fields, okLabel: 'Create' });
   if (!v) return;
   const list = store.createList(v.name, v.folderId || folderId || null);
-  focusAddOnOpen = true;
+  addOnOpen = true;
   location.hash = listHref(list.id);
 }
 
@@ -338,53 +357,42 @@ async function deleteList(id) {
 
 function mountList(id) {
   let query = '';
+  const smallTitle = h('div', { class: 'topbar-title' });
   const titleText = h('span');
+  const pieSlot = h('span', { class: 'title-pie' });
+  const subtitle = h('p', { class: 'large-sub' });
   const sortLabel = h('span');
   const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Filter by status' });
   const itemsEl = h('div');
 
+  topbar.classList.remove('scrolled');
   topbar.replaceChildren(h('div', { class: 'topbar-row' },
     h('div', { class: 'topbar-side' },
-      h('button', { type: 'button', class: 'back-btn', onclick: () => { location.hash = '#/'; } }, icon('back'), 'Lists')),
-    h('h1', { class: 'topbar-title' },
-      h('button', { type: 'button', class: 'title-btn', onclick: () => renameList(id), title: 'Rename list' }, titleText)),
-    h('div', { class: 'topbar-side end' }, iconButton('more', 'List options', () => listMenu(id))),
+      h('button', { type: 'button', class: 'glass-btn back-btn', onclick: () => { location.hash = '#/'; } }, icon('back'), h('span', {}, 'Lists'))),
+    smallTitle,
+    h('div', { class: 'topbar-side end' }, glassButton('more', 'List options', () => listMenu(id))),
   ));
 
-  const addInput = h('input', {
-    type: 'text', class: 'field', placeholder: 'Add an item', 'aria-label': 'New item',
-    autocomplete: 'off', enterkeyhint: 'enter', maxLength: 500,
-  });
-  const addForm = h('form', {
-    class: 'add-form',
-    onsubmit: (e) => {
-      e.preventDefault();
-      const text = addInput.value.trim();
-      if (!text) return;
-      addInput.value = '';
-      store.addItem(id, text);
-      const list = store.getList(id);
-      const q = query.trim().toLocaleLowerCase();
-      if (list.statusFilter.length && !list.statusFilter.includes('not_started')) toast('Added. Your status filter is hiding it.');
-      else if (q && !text.toLocaleLowerCase().includes(q)) toast('Added. Your search is hiding it.');
-    },
-  }, addInput, h('button', { type: 'submit', class: 'btn btn-primary' }, 'Add'));
+  const largeTitle = h('h1', { class: 'large-title' },
+    pieSlot,
+    h('button', { type: 'button', class: 'title-btn', onclick: () => renameList(id), title: 'Rename list' }, titleText));
 
   main.replaceChildren(
-    addForm,
+    largeTitle,
+    subtitle,
     h('div', { class: 'toolbar' },
-      h('input', {
-        type: 'search', class: 'search', placeholder: 'Search items', 'aria-label': 'Search items',
-        oninput: (e) => { query = e.target.value; fillItems(); },
-      }),
+      searchField('Search items', (v) => { query = v; fillItems(); }),
       h('button', { type: 'button', class: 'chip', onclick: () => pickItemSort(id), 'aria-label': 'Sort items' }, icon('sort'), sortLabel),
     ),
     chips,
     itemsEl,
+    h('button', { type: 'button', class: 'fab', 'aria-label': 'Add item', title: 'Add item', onclick: () => quickAdd(id, () => query) }, icon('plus')),
   );
-  if (focusAddOnOpen) {
-    focusAddOnOpen = false;
-    addInput.focus();
+  collapseTitleOnScroll(largeTitle);
+
+  if (addOnOpen) {
+    addOnOpen = false;
+    quickAdd(id, () => query);
   }
 
   function fillChips(list) {
@@ -409,7 +417,7 @@ function mountList(id) {
     const list = store.getList(id);
     if (!list) return;
     if (!list.items.length) {
-      itemsEl.replaceChildren(emptyState('No items yet', 'Type above and tap Add.'));
+      itemsEl.replaceChildren(emptyState('No items yet', 'Tap + to add one.'));
       return;
     }
     const q = query.trim().toLocaleLowerCase();
@@ -425,12 +433,12 @@ function mountList(id) {
       itemsEl.replaceChildren(...store.STATUS_GROUP_ORDER.map((sid) => {
         const group = sorted.filter((i) => i.status === sid);
         if (!group.length) return null;
-        return h('section', { class: 'section' },
-          h('h2', { class: 'group-title' }, `${store.statusInfo(sid).label} · ${group.length}`),
-          h('ul', { class: 'group items' }, group.map((i) => itemRow(id, i))));
+        return h('section', { class: 'item-group' },
+          h('h2', { class: `section-title s-${sid}` }, store.statusInfo(sid).label, h('span', { class: 'section-count' }, group.length)),
+          h('ul', { class: 'rows items' }, group.map((i) => itemRow(id, i))));
       }).filter(Boolean));
     } else {
-      itemsEl.replaceChildren(h('ul', { class: 'group items' }, sorted.map((i) => itemRow(id, i))));
+      itemsEl.replaceChildren(h('ul', { class: 'rows items' }, sorted.map((i) => itemRow(id, i))));
     }
   }
 
@@ -438,8 +446,13 @@ function mountList(id) {
     update() {
       const list = store.getList(id);
       if (!list) { location.replace('#/'); return; }
+      const c = store.counts(list);
       document.title = list.name;
       titleText.textContent = list.name;
+      smallTitle.textContent = list.name;
+      pieSlot.replaceChildren(progressPie(c.complete, c.total));
+      const folder = list.folderId ? store.getFolder(list.folderId) : null;
+      subtitle.textContent = [folder?.name, listSummary(c)].filter(Boolean).join(' · ');
       sortLabel.textContent = store.ITEM_SORTS.find((s) => s.id === list.sort).short;
       fillChips(list);
       fillItems();
@@ -455,14 +468,64 @@ function itemRow(listId, item) {
       type: 'button', class: 'check', 'aria-label': done ? `Mark “${item.text}” not complete` : `Mark “${item.text}” complete`,
       onclick: () => store.updateItem(listId, item.id, { status: done ? 'not_started' : 'complete' }),
     }, h('span', { class: 'ring' }, done ? icon('check') : null)),
-    h('button', { type: 'button', class: 'item-main', onclick: () => editItem(listId, item.id) },
-      h('span', { class: 'item-text' }, item.text),
-      item.notes ? h('span', { class: 'item-notes' }, item.notes) : null),
-    h('button', {
-      type: 'button', class: 'pill', 'aria-label': `Status: ${status.label}. Tap to change.`,
-      onclick: () => pickStatus(listId, item.id),
-    }, status.label),
+    h('div', { class: 'item-body' },
+      h('button', { type: 'button', class: 'item-main', onclick: () => editItem(listId, item.id) },
+        h('span', { class: 'item-text' }, item.text),
+        item.notes ? h('span', { class: 'item-notes' }, item.notes) : null),
+      h('button', {
+        type: 'button', class: 'item-status', 'aria-label': `Status: ${status.label}. Tap to change.`,
+        onclick: () => pickStatus(listId, item.id),
+      }, h('span', { class: 'dot' }), status.label),
+    ),
   );
+}
+
+// Todoist-style quick add: a bottom sheet that stays open so you can add several items in a row.
+function quickAdd(listId, getQuery) {
+  let status = 'not_started';
+  let added = 0;
+  const input = h('input', {
+    type: 'text', class: 'quick-input', placeholder: 'New item', 'aria-label': 'New item',
+    autocomplete: 'off', enterkeyhint: 'enter', maxLength: 500,
+  });
+  const counter = h('span', { class: 'quick-count' });
+  const statusRow = h('div', { class: 'quick-statuses', role: 'radiogroup', 'aria-label': 'Status' });
+  const fillStatuses = () => statusRow.replaceChildren(...store.STATUSES.map((s) => h('button', {
+    type: 'button', role: 'radio', 'aria-checked': String(s.id === status),
+    class: `chip s-${s.id}${s.id === status ? ' active' : ''}`,
+    onclick: () => { status = s.id; fillStatuses(); input.focus(); },
+  }, h('span', { class: 'dot' }), s.label)));
+  fillStatuses();
+
+  let close;
+  const form = h('form', {
+    class: 'quick-add', role: 'dialog', 'aria-label': 'Add item',
+    onsubmit: (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) { close(); return; }
+      const item = store.addItem(listId, text);
+      if (item && status !== 'not_started') store.updateItem(listId, item.id, { status });
+      added++;
+      counter.textContent = `${plural(added, 'item')} added`;
+      input.value = '';
+      input.focus();
+      const list = store.getList(listId);
+      const q = getQuery().trim().toLocaleLowerCase();
+      if (list.statusFilter.length && !list.statusFilter.includes(status)) toast('Added. Your status filter is hiding it.');
+      else if (q && !text.toLocaleLowerCase().includes(q)) toast('Added. Your search is hiding it.');
+    },
+  },
+    input,
+    statusRow,
+    h('div', { class: 'quick-actions' },
+      counter,
+      h('button', { type: 'button', class: 'btn', onclick: () => close() }, 'Done'),
+      h('button', { type: 'submit', class: 'btn btn-primary quick-submit', 'aria-label': 'Add' }, icon('plus'), 'Add'),
+    ),
+  );
+  close = openOverlay(form, { kind: 'sheet', onDismiss: () => close() });
+  input.focus();
 }
 
 async function pickStatus(listId, itemId) {
